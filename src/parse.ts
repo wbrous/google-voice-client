@@ -1,30 +1,33 @@
-import type { MessageDirection, Thread, ThreadEvent } from "./types";
+import type { Thread, ThreadEvent } from "./types";
 
 /**
  * Decodes one raw event row from `api2thread/list`'s positional array
  * response into a {@link ThreadEvent}.
  *
- * Row shape (0-indexed, reverse-engineered from a live capture):
+ * Row shape (0-indexed, reverse-engineered from live captures):
  * `[id, timestampMs, accountNumber, participants, typeCode, directionFlag,
- *   _, _, _, label, _, _, _, _, _, otherPartyNumber, _, tmpId, ...tail,
- *   threadId]`.
+ *   _, _, _, text, _, _, _, _, _, otherPartyNumber, _, tmpId, ...tail,
+ *   threadId]`, where `directionFlag` is `0` for a received message and `1`
+ * for one this account sent, and `text` is the SMS body verbatim (e.g. a
+ * message whose body is literally "hello" appears as `row[9] === "hello"`).
  *
  * @precondition `row` is a raw array from a thread's event list, containing
- *   at least 30 elements with `row[9]` set to a known {@link MessageDirection}.
- * @postcondition Returns the decoded event; throws if `row[9]` is not a
- *   recognized direction label, since that indicates the wire format changed.
+ *   at least 30 elements with `row[5]` set to `0` or `1`.
+ * @postcondition Returns the decoded event; throws if `row[5]` isn't `0` or
+ *   `1`, since that indicates the wire format changed.
  */
 export function parseThreadEvent(row: unknown[]): ThreadEvent {
-  const direction = row[9];
-  if (direction !== "SEND MESSAGE" && direction !== "RECEIVE MESSAGE") {
-    throw new Error(`Unrecognized thread event direction: ${JSON.stringify(direction)}`);
+  const directionFlag = row[5];
+  if (directionFlag !== 0 && directionFlag !== 1) {
+    throw new Error(`Unrecognized thread event direction flag: ${JSON.stringify(directionFlag)}`);
   }
   return {
     id: String(row[0]),
     timestampMs: Number(row[1]),
     accountNumber: String(row[2]),
     otherPartyNumber: String(row[15]),
-    direction: direction as MessageDirection,
+    direction: directionFlag === 1 ? "SENT" : "RECEIVED",
+    text: String(row[9]),
     threadId: String(row[row.length - 1]),
     tmpId: row[17] == null ? undefined : String(row[17]),
   };

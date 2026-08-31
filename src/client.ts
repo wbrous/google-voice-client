@@ -42,57 +42,67 @@ export class GoogleVoiceClient {
 
   /**
    * Fetches every thread (conversation) and its events for the signed-in
-   * account.
-   *
-   * Note: this endpoint returns event *metadata* only (who, when, thread,
-   * send/receive) — Google Voice does not include message body text in this
-   * response; see README for why.
+   * account, including each event's plaintext message body.
    *
    * @precondition Client was constructed with valid, unexpired credentials.
    * @postcondition Resolves to every thread visible to the account; throws
    *   if the HTTP request fails or the response isn't valid JSON.
    */
   async listThreads(): Promise<Thread[]> {
+    // [threadType=2 (SMS), pageSize=100, unknown=50] — matches a real
+    // captured request body; the server rejects an empty "[]" body with 400.
+    const body = "[2,100,50]";
     const res = await fetch(this.url("api2thread/list"), {
       method: "POST",
-      headers: this.headers(),
-      body: "[]",
+      headers: this.headers(new TextEncoder().encode(body).length),
+      body,
     });
     if (!res.ok) {
       throw new Error(`api2thread/list failed: ${res.status} ${res.statusText}`);
     }
-    const body = await res.json();
-    return parseThreadListResponse(body);
+    const responseBody = await res.json();
+    return parseThreadListResponse(responseBody);
   }
 
   /**
-   * Sends a raw `SEND MESSAGE` request to a thread. This mirrors the exact
-   * request Google Voice's web client issues, **except** for the message
-   * body: Google Voice encodes the outgoing text into an opaque token
-   * (captured requests show a single long non-standard-base64 string) whose
-   * encoding could not be determined from a single network capture. Callers
-   * must supply that pre-encoded `payload` themselves.
+   * Sends an SMS to a thread. `text` is the plain message body — Google
+   * Voice's send request carries it verbatim (index 4 of the request
+   * array), the same way `api2thread/list` echoes it back verbatim in each
+   * event row (see {@link parseThreadEvent}).
+   *
+   * The real web client also attaches an opaque anti-abuse attestation
+   * token to this request, generated via Google's WAA/BotGuard service
+   * (`waa-pa.clients6.google.com/$rpc/google.internal.waa.v1.Waa/Create`
+   * followed by running an obfuscated JS challenge it returns — the same
+   * mechanism YouTube uses for its "poToken"). That token is unrelated to
+   * the message content; whether the server actually enforces its presence
+   * on this endpoint is unverified. Pass `attestationToken` to include one
+   * if you generate it; omit it to try without.
    *
    * @precondition `threadId` matches an existing thread (e.g.
    *   `"t.+15551234567"`); `tmpId` is a client-chosen unique numeric string
-   *   used to correlate this send with its eventual event row; `payload` is
-   *   a valid pre-encoded Google Voice message token.
+   *   used to correlate this send with its eventual event row.
    * @postcondition Resolves to the raw parsed JSON response on success;
    *   throws on a non-2xx HTTP response.
    */
-  async sendRawMessage(threadId: string, tmpId: string, payload: string): Promise<unknown> {
+  async sendMessage(
+    threadId: string,
+    text: string,
+    tmpId: string,
+    attestationToken?: string,
+  ): Promise<unknown> {
     const body = JSON.stringify([
       null,
       null,
       null,
       null,
-      "SEND MESSAGE",
+      text,
       threadId,
       null,
       null,
       [Number(tmpId)],
       null,
-      [payload],
+      attestationToken == null ? null : [attestationToken],
     ]);
     const res = await fetch(this.url("api2thread/sendsms"), {
       method: "POST",

@@ -1,13 +1,24 @@
 import { describe, expect, test } from "bun:test";
 import { buildAuthorizationHeader, computeSapisidHash } from "../src/auth";
 
-// If this fails: the SAPISIDHASH digest formula (SHA1 of "ts origin sapisid")
-// no longer matches Google's known scheme, breaking auth for every request.
+// If this fails: the SAPISIDHASH digest formula (SHA1 of "ts sapisid origin",
+// verified against a live, non-redacted Google Voice request) no longer
+// matches, breaking auth for every request.
 describe("computeSapisidHash", () => {
-  test("matches a precomputed SHA1(ts origin sapisid) vector", () => {
-    // sha1("1000000000 https://voice.google.com abc123") precomputed via node:crypto.
+  test("matches a precomputed SHA1(ts sapisid origin) vector", () => {
+    // sha1("1000000000 abc123 https://voice.google.com") precomputed via node:crypto.
     const hash = computeSapisidHash("abc123", "https://voice.google.com", 1000000000);
-    expect(hash).toBe("1000000000_b15be9278da4013243f7a9f5e41405f570249bfd");
+    expect(hash).toBe("1000000000_f4fdd00aa7818646e6b25fcebdeafb6144635451");
+  });
+
+  test("matches a real captured request's SAPISID + timestamp + origin", () => {
+    // From a live, non-redacted curl capture of waa-pa.clients6.google.com/.../Waa/Create.
+    const hash = computeSapisidHash(
+      "-OYpY4DiU79TpFmu/ATMm_Bfq8qheVBI7p",
+      "https://voice.google.com",
+      1788213380,
+    );
+    expect(hash).toBe("1788213380_75a87bc08388c460fdf1d542c3c12bf8ccf89345");
   });
 
   test("is deterministic for the same inputs", () => {

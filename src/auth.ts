@@ -5,8 +5,8 @@ import { createHash } from "node:crypto";
  * internal web clients (gapi, Voice, Gmail, ...) use to sign XHR requests
  * with a session cookie instead of an OAuth bearer token.
  *
- * Formula (reverse-engineered from Google's own `gapi.auth` client code):
- * `SHA1("{unixSeconds} {origin} {sapisid}")`, rendered as
+ * Formula (verified against a live, non-redacted Google Voice request):
+ * `SHA1("{unixSeconds} {sapisid} {origin}")`, rendered as
  * `"{unixSeconds}_{hexDigest}"`.
  *
  * @precondition `sapisid` is the raw value of the `SAPISID` (or
@@ -19,7 +19,7 @@ export function computeSapisidHash(
   origin: string,
   unixSeconds: number = Math.floor(Date.now() / 1000),
 ): string {
-  const digest = createHash("sha1").update(`${unixSeconds} ${origin} ${sapisid}`).digest("hex");
+  const digest = createHash("sha1").update(`${unixSeconds} ${sapisid} ${origin}`).digest("hex");
   return `${unixSeconds}_${digest}`;
 }
 
