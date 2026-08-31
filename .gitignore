@@ -1,0 +1,5 @@
+node_modules/
+dist/
+*.log
+.DS_Store
+voice.google.com_network_log.har
