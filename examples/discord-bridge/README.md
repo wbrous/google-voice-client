@@ -55,7 +55,12 @@ bun run start
   attachments are downloaded and sent as files). The selfbot ignores its own
   messages, so a forward never echoes back.
 - **Discord → Voice**: a DM from `BRIDGE_DM_USER_ID` is sent to the phone via
-  `sendMessage` (a leading `<@mention>` quote is stripped).
+   `sendMessage` (a leading `<@mention>` quote is stripped). Images you send
+   in the DM are uploaded as MMS photo attachments.
+
+`BRIDGE_PHONE` matches leniently: leading `+`, country-code differences, and
+spacing are tolerated (`4697590653` and `+14697590653` both match), so you
+don't have to get the exact E.164 spelling right.
 
 ## Caveats
 

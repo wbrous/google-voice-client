@@ -5,7 +5,8 @@
  * you share with `BRIDGE_DM_USER_ID` to `BRIDGE_PHONE`:
  * - Voice → Discord: a message received on the phone is DM'd to the bridged
  *   user (attachments forwarded as files).
- * - Discord → Voice: a DM from the bridged user is delivered to the phone.
+ * - Discord → Voice: a DM from the bridged user is delivered to the phone;
+ *   images you send in the DM are uploaded back as MMS photos.
  *
  * ⚠️ SELF-BOT WARNING
  * Using Discord with a user token (a "selfbot") violates Discord's Terms of
@@ -44,14 +45,38 @@ function env(name: string): string {
   return v;
 }
 
+/**
+ * Normalizes a phone number to E.164 form using only its digits: strips any
+ * leading `+`, spaces, or punctuation and re-adds a single `+`. Google Voice
+ * returns numbers as `+<cc><number>` (e.g. `+14697590653`), so matching and
+ * thread-id derivation must agree on one canonical form regardless of how
+ * `BRIDGE_PHONE` was typed.
+ */
+function toE164(raw: string): string {
+  return `+${raw.replace(/\D/g, "")}`;
+}
+
+/**
+ * Whether two phone numbers refer to the same line. Compares on digits only
+ * and tolerates a missing/inconsistent country code: `4697590653` (national)
+ * matches `+14697590653` (E.164 with US `1`) because one is a suffix of the
+ * other. Google Voice returns the E.164 form, while `.env` may hold either.
+ */
+function numbersMatch(have: string, want: string): boolean {
+  const a = have.replace(/\D/g, "");
+  const b = want.replace(/\D/g, "");
+  return a === b || a.endsWith(b) || b.endsWith(a);
+}
+
 function loadConfig(): BridgeConfig {
-  const phoneNumber = env("BRIDGE_PHONE");
+  const phoneNumber = toE164(env("BRIDGE_PHONE"));
   return {
     discordToken: env("DISCORD_TOKEN"),
     dmUserId: env("BRIDGE_DM_USER_ID"),
     phoneNumber,
-    // Voice thread ids are "t.+<e164>" — stable for a phone conversation.
-    threadId: `t.+${phoneNumber}`,
+    // Voice thread ids are "t.+<e164 digits>" — strip the + we added so the
+    // literal format doesn't double up.
+    threadId: `t.+${phoneNumber.replace(/^\+/, "")}`,
     sendTokens:
       process.env.GV_SEND_ATTESTATION_TOKEN && process.env.GV_SEND_RECAPTCHA_TOKEN
         ? {
@@ -84,6 +109,21 @@ function stripLeadingMention(content: string): string {
   return content.replace(/^<@!?\d+>\s*/, "").trim();
 }
 
+/**
+ * Downloads a Discord CDN attachment's bytes for forwarding as an MMS photo.
+ * Selfbot message.attachments expose a public `url`; a plain fetch gets the
+ * bytes. Returns the shape the Voice client's `attachment` option expects.
+ */
+async function fetchDiscordAttachment(
+  url: string,
+  contentType: string | null,
+): Promise<{ data: Uint8Array; mimeType: string }> {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Failed to download Discord attachment: ${res.status}`);
+  const data = new Uint8Array(await res.arrayBuffer());
+  return { data, mimeType: contentType || "application/octet-stream" };
+}
+
 discord.once("ready", async () => {
   console.log(`Selfbot online as ${discord.user?.username}`);
   await voice.start({ intervalMs: 5000 });
@@ -110,8 +150,8 @@ voice.on("messageCreate", async (event) => {
     debug("→ skip: direction is", event.direction, "not RECEIVED");
     return;
   }
-  if (event.otherPartyNumber !== config.phoneNumber) {
-    debug("→ skip: otherParty", event.otherPartyNumber, "!= bridged", config.phoneNumber);
+  if (!numbersMatch(event.otherPartyNumber, config.phoneNumber)) {
+    debug("→ skip: otherParty", event.otherPartyNumber, "does not match bridged", config.phoneNumber);
     return;
   }
   try {
@@ -167,16 +207,23 @@ discord.on("messageCreate", async (message) => {
     return;
   }
   const text = stripLeadingMention(message.content);
-  if (!text) {
-    debug("→ skip: empty content after stripping mention");
+  // Allow attachment-only messages: fetch the first Discord attachment's
+  // bytes to send as an MMS photo alongside (or instead of) the text.
+  const discordAttachment = message.attachments.first();
+  if (!text && !discordAttachment) {
+    debug("→ skip: empty content and no attachment");
     return;
   }
   try {
-    debug("sending to phone:", config.threadId, JSON.stringify(text));
+    const attachment = discordAttachment
+      ? await fetchDiscordAttachment(discordAttachment.url, discordAttachment.contentType)
+      : undefined;
+    debug("sending to phone:", config.threadId, JSON.stringify(text), attachment ? `+ MMS (${attachment.mimeType}, ${attachment.data.byteLength}b)` : "");
     await voice.sendMessage(config.threadId, text, String(Date.now()), {
       tokens: config.sendTokens,
+      attachment,
     });
-    console.log(`[discord→voice] ${text}`);
+    console.log(`[discord→voice] ${text || "<attachment>"}`);
   } catch (err) {
     console.error("[discord→voice] failed:", err instanceof Error ? err.message : err);
   }
