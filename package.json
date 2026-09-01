@@ -1,7 +1,7 @@
 {
   "name": "google-voice-ws",
   "version": "0.1.0",
-  "description": "WebSocket client library for Google Voice",
+  "description": "Unofficial client for Google Voice's internal web API",
   "license": "MIT",
   "type": "module",
   "module": "dist/index.js",
@@ -18,7 +18,7 @@
   ],
   "sideEffects": false,
   "scripts": {
-    "build": "rm -rf dist && bun build ./src/index.ts --outdir dist --target node --format esm && tsc",
+    "build": "rm -rf dist && bun build ./src/index.ts --outdir dist --target node --format esm --external playwright && tsc",
     "test": "bun test",
     "typecheck": "tsc --noEmit",
     "refresh-cookies": "bun run bin/refresh-cookies.ts",

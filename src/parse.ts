@@ -13,13 +13,18 @@ import type { Attachment, AttachmentSize, Thread, ThreadEvent } from "./types";
  * @postcondition Returns the decoded attachment.
  */
 function parseAttachment(row: unknown[]): Attachment {
-  const sizes = (row[3] as unknown[][]).map(
-    ([code, width, height]): AttachmentSize => ({
-      code: Number(code),
-      width: Number(width),
-      height: Number(height),
-    }),
-  );
+  // Images carry a [[sizeCode, width, height], ...] array here; other
+  // attachment types (e.g. video/3gpp) carry null — treat as no variants.
+  const rawSizes = row[3];
+  const sizes = Array.isArray(rawSizes)
+    ? (rawSizes as unknown[][]).map(
+        ([code, width, height]): AttachmentSize => ({
+          code: Number(code),
+          width: Number(width),
+          height: Number(height),
+        }),
+      )
+    : [];
   return {
     mimeType: String(row[0]),
     id: String(row[1]),

@@ -24,9 +24,12 @@
  * Requires the optional `playwright` peer dependency (`bun add playwright`);
  * if Playwright's own downloaded Chromium isn't installed, a system
  * `chromium`/`chromium-browser`/`google-chrome` binary is used instead.
+ *
+ * No `playwright` types appear in this module's public surface: the API is
+ * described by local structural interfaces, so consumers that never use
+ * {@link refreshCookies} don't need to install the peer dependency at all.
  */
 import { existsSync } from "node:fs";
-import type * as PlaywrightModule from "playwright";
 import type { GoogleVoiceEnv } from "./env";
 
 export interface RefreshCookiesOptions {
@@ -56,18 +59,46 @@ export interface RefreshedCookies {
   sapisid: string;
 }
 
+/** Structural subset of Playwright's API this module actually uses. */
+interface BrowserCookie {
+  name: string;
+  value: string;
+  domain: string;
+}
+
+interface BrowserPage {
+  goto(url: string, options?: { waitUntil?: string; timeout?: number }): Promise<unknown>;
+  waitForURL(pattern: RegExp, options?: { timeout?: number }): Promise<unknown>;
+  waitForTimeout(ms: number): Promise<void>;
+}
+
+interface BrowserContext {
+  pages(): BrowserPage[];
+  newPage(): Promise<BrowserPage>;
+  addInitScript(script: () => void): Promise<void>;
+  cookies(): Promise<BrowserCookie[]>;
+  close(): Promise<void>;
+}
+
+interface PlaywrightLike {
+  chromium: {
+    executablePath(): string;
+    launchPersistentContext(dir: string, options: Record<string, unknown>): Promise<BrowserContext>;
+  };
+}
+
 /**
  * Loads a `playwright` peer dependency that may not be installed.
  *
  * @precondition None.
- * @postcondition Resolves to the `playwright` module; throws a message
+ * @postcondition Resolves to a Playwright-like module; throws a message
  *   pointing at the install command if it isn't present. Dynamic `import()`
  *   is required here (not a static import) because `playwright` is an
  *   optional peer dependency most consumers of this library never install.
  */
-async function loadPlaywright(): Promise<typeof PlaywrightModule> {
+async function loadPlaywright(): Promise<PlaywrightLike> {
   try {
-    return (await import("playwright")) as typeof PlaywrightModule;
+    return (await import("playwright")) as unknown as PlaywrightLike;
   } catch {
     throw new Error(
       'refreshCookies() requires the optional "playwright" peer dependency. ' +
@@ -90,12 +121,12 @@ const SYSTEM_CHROMIUM_CANDIDATES = [
  *
  * @precondition `options.executablePath`, if set, points at a launchable
  *   Chromium binary.
- * @postcondition Returns a path to use as `executablePath`; throws if
- *   neither an explicit path, a Playwright build, nor a system binary is
- *   available (with the install hint in the message).
+ * @postcondition Returns a path to use as `executablePath`, or `undefined`
+ *   if neither an explicit path, a Playwright build, nor a system binary
+ *   is available.
  */
 function resolveExecutablePath(
-  playwright: typeof PlaywrightModule,
+  playwright: PlaywrightLike,
   options: RefreshCookiesOptions,
 ): string | undefined {
   if (options.executablePath) return options.executablePath;
@@ -136,6 +167,15 @@ export async function refreshCookies(options: RefreshCookiesOptions = {}): Promi
     headless,
     executablePath,
     viewport: { width: 1280, height: 900 },
+    // Hide automation signals Google's sign-in flow checks ("this browser
+    // or app may not be secure"): drop the AutomationControlled blink flag
+    // and the HeadlessChrome UA token that would otherwise identify us.
+    args: ["--disable-blink-features=AutomationControlled", "--no-first-run", "--no-default-browser-check"],
+    userAgent:
+      "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/151.0.0.0 Safari/537.36",
+  });
+  await context.addInitScript(() => {
+    Object.defineProperty(navigator, "webdriver", { get: () => undefined });
   });
   try {
     const page = context.pages()[0] ?? (await context.newPage());

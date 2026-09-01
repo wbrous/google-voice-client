@@ -111,6 +111,20 @@ describe("parseThreadEvent", () => {
       ],
     });
   });
+  // If this fails: non-image attachments (e.g. video/3gpp, whose sizes
+  // field is null on the wire) crash the parser instead of decoding with an
+  // empty variants list.
+  test("decodes a video attachment with null sizes", () => {
+    const content = ["", "", [["video/3gpp", "b413c15b-1", 3, null, 2]], [], "", []];
+    const event = parseThreadEvent(rawRow({ smsText: "MMS Received", mmsContent: content }));
+    expect(event.attachments).toEqual([
+      {
+        mimeType: "video/3gpp",
+        id: "b413c15b-1",
+        sizes: [],
+      },
+    ]);
+  });
 });
 
 // If this fails: the top-level [threads, ...] response shape is decoded
