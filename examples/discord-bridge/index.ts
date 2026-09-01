@@ -8,6 +8,9 @@
  * - Discord → Voice: a DM from the bridged user is delivered to the phone;
  *   images you send in the DM are uploaded back as MMS photos.
  *
+ * The two directions are deliberately symmetric: a person on the phone and a
+ * person on Discord both just see the other's plain messages (plus files).
+ *
  * ⚠️ SELF-BOT WARNING
  * Using Discord with a user token (a "selfbot") violates Discord's Terms of
  * Service. Discord deactivates accounts detected doing this. This example is
@@ -26,8 +29,10 @@
  *   BRIDGE_DM_USER_ID                       Discord user who is bridged
  *   BRIDGE_PHONE                            E.164 phone (e.g. +14697590653)
  *   GV_SEND_ATTESTATION_TOKEN / GV_SEND_RECAPTCHA_TOKEN  optional send tokens
+ *   GV_POLL_INTERVAL_SEC                   Voice poll interval (default 5)
  *   DEBUG=1                                 verbose logging of every event/filter
  */
+import { createRequire } from "node:module";
 import { Client } from "discord.js-selfbot-youtsuho-v13";
 import { GoogleVoiceClient, loadEnv } from "google-voice-client";
 
@@ -38,10 +43,10 @@ import { GoogleVoiceClient, loadEnv } from "google-voice-client";
  * at `file.file` — so it always sends `file_size: 0` and Discord rejects the
  * upload with "files[0].file_size: int value should be greater than or equal
  * to 1". Rebind getUploadURL to fall back to the inner bytes.
+ *
+ * The fork's internal Util is CommonJS; `import * as` yields a frozen ESM
+ * namespace we can't rebind, so grab a mutable reference via CJS require.
  */
-// The fork's internal Util is CommonJS; `import * as` yields a frozen ESM
-// namespace we can't rebind, so grab a mutable reference via CJS require.
-import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 const Util = require("discord.js-selfbot-youtsuho-v13/src/util/Util") as {
   getUploadURL: (
@@ -67,13 +72,6 @@ interface BridgeConfig {
   discordToken: string;
   dmUserId: string;
   phoneNumber: string;
-  /**
-   * The Google Contact profile image URL for the bridged phone. Used to
-   * display the phone's avatar next to forwarded messages and (in the
-   * automated token-refresh) to verify the right contact was selected in the
-   * Voice composer — a mismatched avatar means the wrong thread was chosen.
-   */
-  contactImage?: string;
   /** Resolved lazily/once from the live API (see resolveThreadId). */
   threadId?: string;
   sendTokens?: { attestationToken: string; recaptchaToken: string };
@@ -85,12 +83,6 @@ function env(name: string): string {
   const v = process.env[name];
   if (!v) throw new Error(`Missing required environment variable ${name}`);
   return v;
-}
-
-/** Optional env that yields `undefined` when unset (no throw). */
-function optEnv(name: string): string | undefined {
-  const v = process.env[name];
-  return v && v.length > 0 ? v : undefined;
 }
 
 /**
@@ -115,13 +107,13 @@ function numbersMatch(have: string, want: string): boolean {
   const b = want.replace(/\D/g, "");
   return a === b || a.endsWith(b) || b.endsWith(a);
 }
+
 function loadConfig(): BridgeConfig {
   const phoneNumber = toE164(env("BRIDGE_PHONE"));
   return {
     discordToken: env("DISCORD_TOKEN"),
     dmUserId: env("BRIDGE_DM_USER_ID"),
     phoneNumber,
-    contactImage: optEnv("BRIDGE_CONTACT_IMAGE"),
     sendTokens:
       process.env.GV_SEND_ATTESTATION_TOKEN && process.env.GV_SEND_RECAPTCHA_TOKEN
         ? {
@@ -129,7 +121,7 @@ function loadConfig(): BridgeConfig {
             recaptchaToken: process.env.GV_SEND_RECAPTCHA_TOKEN,
           }
         : undefined,
-    pollIntervalSec: Number(optEnv("GV_POLL_INTERVAL_SEC") ?? "5"),
+    pollIntervalSec: Number(process.env.GV_POLL_INTERVAL_SEC ?? 5),
   };
 }
 
@@ -229,23 +221,14 @@ voice.on("messageCreate", async (event) => {
     const dm = await user.createDM();
     const body = event.text || "(message with no text)";
     const attachment = event.attachments[0];
-    // When BRIDGE_CONTACT_IMAGE is set, attach a small embed showing the
-    // contact's avatar + phone so forwarded messages are clearly identifiable
-    // (and a wrong source is easy to spot).
-    const embed = config.contactImage
-      ? {
-          author: { name: config.phoneNumber, iconURL: config.contactImage },
-          color: 0x34a853, // Google green
-        }
-      : undefined;
     if (attachment) {
       const { data, contentType } = await voice.downloadAttachment(attachment.id);
       const name = `attachment.${contentType.split("/")[1] ?? "bin"}`;
       debug("forwarding attachment to discord:", name, contentType, data.byteLength, "bytes");
-      await dm.send({ content: body, files: [{ attachment: Buffer.from(data), name }], embeds: embed ? [embed] : [] });
+      await dm.send({ content: body, files: [{ attachment: Buffer.from(data), name }] });
     } else {
       debug("forwarding text to discord:", JSON.stringify(body));
-      await dm.send({ content: body, embeds: embed ? [embed] : [] });
+      await dm.send(body);
     }
     console.log(`[voice→discord] ${event.text || "<attachment>"}`);
   } catch (err) {
@@ -325,7 +308,15 @@ discord.on("messageCreate", async (message) => {
 
 process.on("SIGINT", () => {
   voice.stop();
-  void discord.destroy();
+  // discord.js-selfbot-youtsuho-v13's WebSocketShard#destroy() dereferences
+  // `this.connection` unconditionally; if the gateway connection was never
+  // established (or already dropped) that throws a synchronous TypeError
+  // that would otherwise surface as an uncaught exception during shutdown.
+  try {
+    void Promise.resolve(discord.destroy()).catch(() => {});
+  } catch {
+    // ignore — see comment above
+  }
   process.exit(0);
 });
 
