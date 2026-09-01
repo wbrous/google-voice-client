@@ -1,28 +1,32 @@
 /**
- * Bridge between one Google Voice phone number and one Discord DM.
+ * Selfbot bridge between one Google Voice phone number and one Discord DM.
  *
- * Two-way:
- * - **Voice → Discord**: a message received on the configured phone number
- *   is forwarded into the DM channel you share with the bot.
- * - **Discord → Voice**: a message you send in that DM is delivered to the
- *   phone number.
+ * Logs in as YOUR OWN Discord user account (a "selfbot") and bridges the DM
+ * you share with `BRIDGE_DM_USER_ID` to `BRIDGE_PHONE`:
+ * - Voice → Discord: a message received on the phone is DM'd to the bridged
+ *   user (attachments forwarded as files).
+ * - Discord → Voice: a DM from the bridged user is delivered to the phone.
  *
- * Outbound (Discord → Voice) sends require the anti-abuse tokens Google's
- * web client mints via its WAA/BotGuard + reCAPTCHA flow (the SDK cannot
- * mint them). Set `GV_SEND_ATTESTATION_TOKEN` and `GV_SEND_RECAPTCHA_TOKEN`
- * to replay a freshly-captured pair. Inbound forwarding needs only the
- * session cookie.
+ * ⚠️ SELF-BOT WARNING
+ * Using Discord with a user token (a "selfbot") violates Discord's Terms of
+ * Service. Discord deactivates accounts detected doing this. This example is
+ * provided as-is; you accept full account-loss risk by running it against a
+ * real account. Prefer a regular bot token unless you specifically need a
+ * user account.
+ *
+ * Outbound (Discord → Voice) sends also require the anti-abuse tokens
+ * Google's web client mints (WAA/BotGuard + reCAPTCHA); the SDK cannot mint
+ * them. Set GV_SEND_ATTESTATION_TOKEN / GV_SEND_RECAPTCHA_TOKEN to replay a
+ * fresh capture. Inbound needs only the session cookie.
  *
  * Environment:
- *   GV_COOKIE / GV_API_KEY / GV_SAPISID ...  Google Voice session (see .env)
- *   DISCORD_TOKEN                          Discord bot token
- *   BRIDGE_DM_USER_ID                      Discord user whose DM is bridged
- *   BRIDGE_PHONE                           E.164 phone (e.g. +14697590653)
- *   GV_SEND_ATTESTATION_TOKEN              optional: WAA/BotGuard token
- *   GV_SEND_RECAPTCHA_TOKEN                optional: reCAPTCHA-style token
- *   VOICE_API_KEY                          override GV_API_KEY if different
+ *   GV_COOKIE / GV_API_KEY / GV_SAPISID ...  Google Voice session
+ *   DISCORD_TOKEN                           YOUR Discord **user** token
+ *   BRIDGE_DM_USER_ID                       Discord user who is bridged
+ *   BRIDGE_PHONE                            E.164 phone (e.g. +14697590653)
+ *   GV_SEND_ATTESTATION_TOKEN / GV_SEND_RECAPTCHA_TOKEN  optional send tokens
  */
-import { Client as DiscordClient, Events, GatewayIntentBits } from "discord.js";
+import { Client } from "discord.js-selfbot-youtsuho-v13";
 import { GoogleVoiceClient, loadEnv } from "google-voice-client";
 
 interface BridgeConfig {
@@ -60,18 +64,16 @@ function loadConfig(): BridgeConfig {
 const voiceEnv = loadEnv();
 const config = loadConfig();
 const voice = new GoogleVoiceClient(voiceEnv);
-const discord = new DiscordClient({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.DirectMessages, GatewayIntentBits.MessageContent],
-});
+const discord = new Client();
 
 function stripLeadingMention(content: string): string {
-  // Discord prefixes a bridged user's message with `<@id> ` when they reply
-  // to the bot; drop it so we don't send "@bot text" to the phone.
+  // A bridged user replying to our forwarded message quotes it with a
+  // <@...> prefix — drop it so we don't echo the pinging mention to the phone.
   return content.replace(/^<@!?\d+>\s*/, "").trim();
 }
 
-discord.once(Events.ClientReady, async () => {
-  console.log(`Discord bot online as ${discord.user?.tag}`);
+discord.once("ready", async () => {
+  console.log(`Selfbot online as ${discord.user?.username}`);
   await voice.start({ intervalMs: 5000 });
   console.log("Voice poll loop started. Bridging", config.phoneNumber, "<->", config.dmUserId);
   if (!config.sendTokens) {
@@ -82,15 +84,15 @@ discord.once(Events.ClientReady, async () => {
   }
 });
 
-// Voice → Discord: forward incoming SMS/MMS from the bridged number.
+// Voice → Discord: forward incoming SMS/MMS from the bridged number into the
+// DM you share with the bridged user.
 voice.on("messageCreate", async (event) => {
-  if (event.direction !== "RECEIVED") return; // ignore our own sends
+  if (event.direction !== "RECEIVED") return;
   if (event.otherPartyNumber !== config.phoneNumber) return;
   try {
     const user = await discord.users.fetch(config.dmUserId);
     const dm = await user.createDM();
     let body = event.text || "(message with no text)";
-    // Download the first attachment and send it with the caption.
     const attachment = event.attachments[0];
     if (attachment) {
       const { data, contentType } = await voice.downloadAttachment(attachment.id);
@@ -111,18 +113,19 @@ voice.on("disconnect", (error) => {
   console.error("Refresh the session cookie (.env) and restart.");
 });
 
-// Discord → Voice: forward the bridged user's DM to the phone.
-discord.on(Events.MessageCreate, async (message) => {
-  if (message.author.bot) return;
-  if (message.author.id !== config.dmUserId) return;
+// Discord → Voice: forward a DM from the bridged user to the phone.
+// Must ignore the selfbot's OWN messages (including its voice forwards),
+// else we'd echo every forward back to the phone in a loop.
+discord.on("messageCreate", async (message) => {
+  if (message.author.id === discord.user?.id) return; // self — never loop
+  if (message.author.id !== config.dmUserId) return; // only the bridged user
+  if (message.channel.type !== "DM" && message.channel.type !== "GROUP") return;
   if (!config.sendTokens) {
     console.warn("Outbound send skipped: no send tokens configured.");
-    await message.channel
-      .send("Cannot send: GV_SEND_ATTESTATION_TOKEN / GV_SEND_RECAPTCHA_TOKEN not set.")
-      .catch(() => {});
     return;
   }
   const text = stripLeadingMention(message.content);
+  if (!text) return;
   try {
     await voice.sendMessage(config.threadId, text, String(Date.now()), {
       tokens: config.sendTokens,
@@ -130,9 +133,6 @@ discord.on(Events.MessageCreate, async (message) => {
     console.log(`[discord→voice] ${text}`);
   } catch (err) {
     console.error("[discord→voice] failed:", err instanceof Error ? err.message : err);
-    await message.channel
-      .send(`Failed to send: ${err instanceof Error ? err.message : String(err)}`)
-      .catch(() => {});
   }
 });
 

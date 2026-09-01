@@ -1,35 +1,43 @@
-# Google Voice ↔ Discord bridge
+# Google Voice ↔ Discord bridge (selfbot)
 
-Bridges one Google Voice phone number with one Discord DM: messages the
-phone receives are forwarded into your DM with the bot, and messages you
-send in that DM are delivered to the phone.
+Bridges one Google Voice phone number with one Discord DM by logging in as
+**your own Discord user account** (a "selfbot"). When the phone receives a
+message it is DM'd to the bridged user; when the bridged user DMs back, it is
+delivered to the phone.
+
+> **⚠️ Discord ToS warning**
+>
+> This logs into Discord with a *user* token, which Discord forbids
+> ("selfbot"). Discord deactivates accounts detected doing this — it is a
+> ban-risk on the account, not a gray area. Use a regular bot token instead
+> unless you specifically need a user account. This example is provided
+> as-is; running it against a real account is your own risk.
 
 ## Setup
 
-1. Install deps:
+1. Register the local `google-voice-client` link once (the bridge depends on
+   it via `link:`, not a published npm version):
+   ```bash
+   cd ..    # repo root
+   bun link
+   ```
+2. Install the bridge deps:
    ```bash
    cd examples/discord-bridge
    bun install
    ```
+3. Create the Google Voice session (see the main repo's `.env.example` — needs
+   `GV_COOKIE`, `GV_API_KEY`, `GV_SAPISID`, etc.).
 
-2. Create the Google Voice session in `.env` (see the main repo's
-   `.env.example` — needs `GV_COOKIE`, `GV_API_KEY`, `GV_SAPISID`, etc.).
-   Copy `.env.example` here and fill it in.
-
-3. Create a Discord bot at <https://discord.com/developers/applications>,
-   copy its token, and add it to your server (it needs the ability to DM you
-   — bots can't initiate a DM until the user has sent the bot a message
-   once).
-
-4. Get your Discord user id (Developer Mode → copy user id) and your
-   E.164 phone number (e.g. `+14697590653`).
+4. Get your Discord **user token** (Developer Mode → the account you'll run as)
+   and the **user id** of the person whose DM you're bridging.
 
 ## Environment
 
 | Variable | Purpose |
 |----------|---------|
 | `GV_COOKIE` / `GV_API_KEY` / `GV_SAPISID` / `GV_AUTH_USER` | Google Voice session (see main repo) |
-| `DISCORD_TOKEN` | Discord bot token |
+| `DISCORD_TOKEN` | Your Discord **user** token (selfbot) |
 | `BRIDGE_DM_USER_ID` | Discord user whose DM is bridged |
 | `BRIDGE_PHONE` | E.164 phone, e.g. `+14697590653` |
 | `GV_SEND_ATTESTATION_TOKEN` / `GV_SEND_RECAPTCHA_TOKEN` | Required for Discord→phone sends |
@@ -40,15 +48,23 @@ send in that DM are delivered to the phone.
 bun run start
 ```
 
-## Important caveat: outbound sends
+## How it works
 
-Receiving works with just the session cookie: incoming SMS/MMS to the bridged
-phone are forwarded to Discord, including photo attachments.
+- **Voice → Discord**: `GoogleVoiceClient`'s event loop detects an incoming
+  message from `BRIDGE_PHONE` and DMs it to `BRIDGE_DM_USER_ID` (photo
+  attachments are downloaded and sent as files). The selfbot ignores its own
+  messages, so a forward never echoes back.
+- **Discord → Voice**: a DM from `BRIDGE_DM_USER_ID` is sent to the phone via
+  `sendMessage` (a leading `<@mention>` quote is stripped).
 
-**Sending** from Discord to the phone requires the anti-abuse tokens Google's
-web client mints (WAA/BotGuard + reCAPTCHA) — the SDK does not mint them, and
-Google's `sendsms` endpoint returns 401 without them. Set
-`GV_SEND_ATTESTATION_TOKEN` and `GV_SEND_RECAPTCHA_TOKEN` to a freshly-captured
-pair (from a real browser session's send request) to enable Discord→phone.
-When they're unset the bot reports that sends are disabled but continues
-forwarding phone→Discord.
+## Caveats
+
+- **Outbound sends need the WAA/BotGuard + reCAPTCHA tokens** Google's web
+  client mints (the SDK cannot). Set `GV_SEND_ATTESTATION_TOKEN` and
+  `GV_SEND_RECAPTCHA_TOKEN` to a freshly-captured pair to enable Discord→phone;
+  without them the bridge logs that outbound is disabled and keeps forwarding
+  inbound.
+- Selfbot libraries (here: `discord.js-selfbot-youtsuho-v13`, a fork of the
+  archived `discord.js-selfbot-v13`) track Discord API changes loosely; a
+  Discord update may break login until the fork catches up. See the fork's
+  GitHub for the latest state.
