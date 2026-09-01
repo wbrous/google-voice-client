@@ -74,8 +74,12 @@ don't have to get the exact E.164 spelling right.
 
    That opens a browser window — send a real text to any number there, and the
    helper intercepts `sendsms`, extracts the token pair, and writes the two
-   `GV_SEND_*` vars into `.env`. Without them the bridge logs that outbound is
-   disabled and keeps forwarding inbound.
+   `GV_SEND_*` vars into `.env`. (Driving the send fully headless isn't
+   reliable: Voice only mints tokens for *saved contacts* in its GUI, so a
+   raw-number compose doesn't fire a send.)
+   
+   Without tokens the bridge logs that outbound is disabled and keeps
+   forwarding inbound.
 - Selfbot libraries (here: `discord.js-selfbot-youtsuho-v13`, a fork of the
   archived `discord.js-selfbot-v13`) track Discord API changes loosely; a
   Discord update may break login until the fork catches up. See the fork's

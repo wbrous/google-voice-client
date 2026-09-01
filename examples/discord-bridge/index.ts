@@ -67,7 +67,8 @@ interface BridgeConfig {
   discordToken: string;
   dmUserId: string;
   phoneNumber: string;
-  threadId: string;
+  /** Resolved lazily/once from the live API (see resolveThreadId). */
+  threadId?: string;
   sendTokens?: { attestationToken: string; recaptchaToken: string };
 }
 
@@ -106,9 +107,6 @@ function loadConfig(): BridgeConfig {
     discordToken: env("DISCORD_TOKEN"),
     dmUserId: env("BRIDGE_DM_USER_ID"),
     phoneNumber,
-    // Voice thread ids are "t.+<e164 digits>" — strip the + we added so the
-    // literal format doesn't double up.
-    threadId: `t.+${phoneNumber.replace(/^\+/, "")}`,
     sendTokens:
       process.env.GV_SEND_ATTESTATION_TOKEN && process.env.GV_SEND_RECAPTCHA_TOKEN
         ? {
@@ -123,6 +121,30 @@ const voiceEnv = loadEnv();
 const config = loadConfig();
 const voice = new GoogleVoiceClient(voiceEnv);
 const discord = new Client();
+
+/**
+ * Resolves the Voice thread id for the bridged phone by querying the live
+ * account, rather than guessing "t.+<digits>" (which silently drops the
+ * country code — the real thread is t.+14697590653, not t.+4697590653, and
+ * sendsms returns INVALID_ARGUMENT for a wrong thread). Matches the other
+ * party with the same suffix-tolerant numbersMatch used elsewhere, then
+ * caches it so we only hit listThreads once per conversation.
+ */
+async function resolveThreadId(): Promise<string> {
+  if (config.threadId) return config.threadId;
+  const threads = await voice.listThreads();
+  const match = threads.find((t) =>
+    t.events.some((e) => numbersMatch(e.otherPartyNumber, config.phoneNumber)),
+  );
+  if (!match) {
+    throw new Error(
+      `No Voice thread found for ${config.phoneNumber}. Open a conversation with it in voice.google.com first, or check BRIDGE_PHONE.`,
+    );
+  }
+  config.threadId = match.threadId;
+  debug("resolved threadId:", config.threadId, "for", config.phoneNumber);
+  return config.threadId;
+}
 
 /**
  * Debug logger: enabled when `DEBUG=1` (or `DEBUG=true`) is set in env.
@@ -250,25 +272,27 @@ discord.on("messageCreate", async (message) => {
     const attachment = discordAttachment
       ? await fetchDiscordAttachment(discordAttachment.url, discordAttachment.contentType)
       : undefined;
+    const threadId = await resolveThreadId();
     debug(
       "sending to phone:",
-      config.threadId,
+      threadId,
       JSON.stringify(text),
       attachment ? `+ MMS (${attachment.mimeType}, ${attachment.data.byteLength}b)` : "",
     );
-    await voice.sendMessage(config.threadId, text, String(Date.now()), {
+    await voice.sendMessage(threadId, text, String(Date.now()), {
       tokens: config.sendTokens,
       attachment,
     });
     console.log(`[discord→voice] ${text || "<attachment>"}`);
   } catch (err) {
     console.error("[discord→voice] failed:", err instanceof Error ? err.message : err);
-    // A 400 on sendsms (not 401) almost always means the WAA/reCAPTCHA send
-    // tokens have gone stale — they're session-recent and expire in
-    // minutes-to-hours. Re-capture a fresh pair rather than guessing.
+    // A 400 INVALID_ARGUMENT on sendsms is usually a stale
+    // WAA/reCAPTCHA send-token (they expire in minutes-hours) OR a wrong
+    // threadId. Point at both so the operator can re-capture tokens or
+    // confirm the resolved thread.
     if (err instanceof Error && /400|INVALID_ARGUMENT/.test(err.message)) {
       console.error(
-        "↳ the GV_SEND_* tokens look stale — run `bun run capture-tokens` and re-send a message to refresh them (inbound forwarding still works meanwhile).",
+        "↳ likely a stale GV_SEND_* token (`bun run capture-tokens`) or a wrong threadId — the debug line above shows the thread being used.",
       );
     }
   }
