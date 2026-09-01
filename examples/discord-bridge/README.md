@@ -77,13 +77,15 @@ don't have to get the exact E.164 spelling right.
    `bin/refresh-tokens.ts` drives a real headless Chromium session against an
    **existing** Voice thread for `BRIDGE_PHONE` (found by matching the
    thread-list `itemId` to the phone's digits, not by contact-name text —
-   works whether or not the number is a saved Google Contact), sends
-   `[AUTOMATED] Refreshing tokens...` through it, intercepts the resulting
-   `sendsms` request for the token pair, and writes `GV_SEND_ATTESTATION_TOKEN`
-   / `GV_SEND_RECAPTCHA_TOKEN` into `.env`. Requires at least one prior
-   message already exchanged with `BRIDGE_PHONE` (a thread must already
-   exist — Voice's anti-abuse flow only mints tokens for a real send, and a
-   synthetic *new* conversation to a raw, non-contact number never fires).
+   works whether or not the number is a saved Google Contact), then types a
+   refresh message and lets the page start sending it — but intercepts the
+   `sendsms` network request and aborts it before it reaches Google's
+   servers. The token pair rides in the request body, so this captures fresh
+   tokens **without actually delivering a message** to your phone. Requires
+   at least one prior message already exchanged with `BRIDGE_PHONE` (a
+   thread must already exist — Voice's anti-abuse flow only mints tokens for
+   an attempted send, and a synthetic *new* conversation to a raw,
+   non-contact number never triggers one at all).
 
    Without tokens the bridge logs that outbound is disabled and keeps
    forwarding inbound.

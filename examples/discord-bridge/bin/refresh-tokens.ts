@@ -3,17 +3,21 @@
  * Automatically captures a fresh WAA/BotGuard + reCAPTCHA send-token pair by
  * driving a real (headless) Chromium session: open voice.google.com/messages,
  * click through the thread list until the one for `BRIDGE_PHONE` is found (by
- * URL `itemId`, not by fragile contact-name text matching), type and send an
- * "[AUTOMATED] Refreshing tokens..." message, and intercept the resulting
- * `api2thread/sendsms` request body for the token pair.
+ * URL `itemId`, not by fragile contact-name text matching), then type a
+ * refresh message and let the page start sending it — but intercept the
+ * `api2thread/sendsms` request and abort it before it reaches Google's
+ * servers, so no message is ever actually delivered.
  *
- * Why a *real* send is required: Google's `sendsms` endpoint rejects requests
- * without these two anti-abuse tokens, and the tokens are minted by the page's
- * own obfuscated JS only when an actual send happens through the UI — they
- * cannot be fabricated or intercepted any other way. Driving a synthetic new
- * conversation (typing a raw phone number into the recipient picker) does
- * NOT trigger a real send, because Voice requires the number to be a saved
- * Google Contact; clicking an *existing* thread from the list does.
+ * Why a send attempt is still required: Google's `sendsms` endpoint rejects
+ * requests without these two anti-abuse tokens, and the tokens are minted by
+ * the page's own obfuscated JS only when a send is triggered through the UI
+ * — they cannot be fabricated or intercepted any other way. Driving a
+ * synthetic new conversation (typing a raw phone number into the recipient
+ * picker) does NOT trigger this at all, because Voice requires the number to
+ * be a saved Google Contact; clicking an *existing* thread from the list
+ * does trigger it. The tokens are already attached to the *request* the
+ * moment the page issues it, so aborting the request before it leaves the
+ * browser still yields a fresh token pair with zero message delivered.
  *
  * Runs once, or continuously every `REFRESH_MINUTES` minutes when invoked
  * with `--loop` (or `LOOP=1`). Reuses `.gv-browser-profile` (created here if
@@ -31,7 +35,7 @@ const PROFILE_DIR = new URL("../.gv-browser-profile", import.meta.url).pathname;
 const REFRESH_MINUTES = Number(process.env.REFRESH_MINUTES ?? "60");
 const LOOP = process.env.LOOP === "1" || process.argv.includes("--loop");
 const HEADLESS = process.env.HEADLESS !== "0";
-const MESSAGE_TEXT = "[AUTOMATED] Refreshing tokens...";
+const MESSAGE_TEXT = "[AUTOMATED] Refreshing tokens... (never sent — request is intercepted and aborted)";
 
 function envLines(): Map<string, string> {
   const map = new Map<string, string>();
@@ -60,8 +64,9 @@ function digitsOf(raw: string): string {
 
 /**
  * Runs one capture cycle: opens Voice, finds the thread whose `itemId`
- * matches `BRIDGE_PHONE`'s digits, sends the refresh message through it, and
- * writes the intercepted token pair to `.env`. Returns true on success.
+ * matches `BRIDGE_PHONE`'s digits, triggers (but never delivers) a refresh
+ * send through it, and writes the intercepted token pair to `.env`. Returns
+ * true on success.
  */
 async function captureOnce(): Promise<boolean> {
   const phone = process.env.BRIDGE_PHONE;
@@ -73,15 +78,14 @@ async function captureOnce(): Promise<boolean> {
     args: ["--disable-blink-features=AutomationControlled"],
   });
   let tokens: { attestation: string; recaptcha: string } | null = null;
-  let sendOk = false;
   try {
     const page = ctx.pages()[0] ?? (await ctx.newPage());
-    page.on("response", async (res) => {
-      if (!res.url().includes("api2thread/sendsms")) return;
-      sendOk = res.ok();
-    });
-    page.on("request", (req) => {
-      if (!req.url().includes("api2thread/sendsms")) return;
+
+    // Intercept the send request and abort it before it reaches Google's
+    // servers — the token pair rides in the request body, so we already
+    // have what we need without letting the message actually deliver.
+    await page.route("**/api2thread/sendsms*", async (route) => {
+      const req = route.request();
       try {
         const body = JSON.parse(req.postData() ?? "null") as unknown[] | null;
         const field = body?.[10] as unknown[] | undefined;
@@ -92,6 +96,7 @@ async function captureOnce(): Promise<boolean> {
         // Ignore unparseable sendsms bodies — tokens stay null and the
         // caller reports failure.
       }
+      await route.abort("failed");
     });
 
     await page.goto("https://voice.google.com/u/0/messages", { waitUntil: "domcontentloaded" });
@@ -123,19 +128,19 @@ async function captureOnce(): Promise<boolean> {
     await composer.fill(MESSAGE_TEXT);
     await page.waitForTimeout(500);
     await composer.press("Enter");
-    await page.waitForTimeout(4000);
+    await page.waitForTimeout(3000);
   } finally {
     await ctx.close().catch(() => {});
   }
 
-  if (!tokens || !sendOk) {
-    console.error("[refresh-tokens] Send did not complete or tokens were not captured.");
+  if (!tokens) {
+    console.error("[refresh-tokens] Send attempt did not fire or tokens were not captured.");
     return false;
   }
   const captured = tokens;
   setEnvVar("GV_SEND_ATTESTATION_TOKEN", captured.attestation);
   setEnvVar("GV_SEND_RECAPTCHA_TOKEN", captured.recaptcha);
-  console.log(`[refresh-tokens] Captured fresh send tokens at ${new Date().toISOString()}.`);
+  console.log(`[refresh-tokens] Captured fresh send tokens at ${new Date().toISOString()} (no message sent).`);
   return true;
 }
 
