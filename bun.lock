@@ -12,6 +12,14 @@
         "playwright": "^1.62.1",
         "typescript": "^5.7.0",
       },
+      "peerDependencies": {
+        "@mherod/get-cookie": "^4.5.0",
+        "playwright": "^1.62.1",
+      },
+      "optionalPeers": [
+        "@mherod/get-cookie",
+        "playwright",
+      ],
     },
   },
   "packages": {

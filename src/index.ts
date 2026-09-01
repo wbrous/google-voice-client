@@ -12,6 +12,13 @@ export { GoogleVoiceClient } from "./client";
 export type { OutgoingAttachment, SendMessageOptions } from "./client";
 export { extractCookieValue, loadEnv, writeEnvCookie, writeEnvVar } from "./env";
 export type { GoogleVoiceEnv } from "./env";
+export {
+  detectBrowsers,
+  findFirefoxProfileDir,
+  firefoxProfileRoots,
+  readBrowserSession,
+} from "./browser";
+export type { SupportedBrowser } from "./browser";
 export { findBrowserProfileDir, parseProfilesIni, readFirefoxSession } from "./firefox";
 export { refreshCookies, refreshEnv } from "./refresh";
 export type { RefreshCookiesOptions, RefreshedCookies } from "./refresh";

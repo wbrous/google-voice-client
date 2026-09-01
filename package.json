@@ -18,7 +18,7 @@
   ],
   "sideEffects": false,
   "scripts": {
-    "build": "rm -rf dist && bun build ./src/index.ts --outdir dist --target node --format esm --external playwright && tsc",
+    "build": "rm -rf dist && bun build ./src/index.ts --outdir dist --target node --format esm --external playwright --external @mherod/get-cookie && tsc",
     "test": "bun test",
     "typecheck": "tsc --noEmit",
     "refresh-cookies": "bun run bin/refresh-cookies.ts",
@@ -39,9 +39,13 @@
     "sharp": "^0.35.4"
   },
   "peerDependencies": {
+    "@mherod/get-cookie": "^4.5.0",
     "playwright": "^1.62.1"
   },
   "peerDependenciesMeta": {
+    "@mherod/get-cookie": {
+      "optional": true
+    },
     "playwright": {
       "optional": true
     }
