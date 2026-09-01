@@ -60,10 +60,17 @@ bun run start
 ## Caveats
 
 - **Outbound sends need the WAA/BotGuard + reCAPTCHA tokens** Google's web
-  client mints (the SDK cannot). Set `GV_SEND_ATTESTATION_TOKEN` and
-  `GV_SEND_RECAPTCHA_TOKEN` to a freshly-captured pair to enable Discord→phone;
-  without them the bridge logs that outbound is disabled and keeps forwarding
-  inbound.
+   client mints (the SDK cannot fabricate them; they're live and short-lived,
+   so they need periodic re-capture). Grab a fresh pair with:
+
+   ```bash
+   bun run capture-tokens
+   ```
+
+   That opens a browser window — send a real text to any number there, and the
+   helper intercepts `sendsms`, extracts the token pair, and writes the two
+   `GV_SEND_*` vars into `.env`. Without them the bridge logs that outbound is
+   disabled and keeps forwarding inbound.
 - Selfbot libraries (here: `discord.js-selfbot-youtsuho-v13`, a fork of the
   archived `discord.js-selfbot-v13`) track Discord API changes loosely; a
   Discord update may break login until the fork catches up. See the fork's

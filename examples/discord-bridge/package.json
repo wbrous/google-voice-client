@@ -4,7 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "start": "bun --env-file=.env run index.ts"
+    "start": "bun --env-file=.env run index.ts",
+    "capture-tokens": "bun --env-file=.env run bin/capture-send-tokens.ts"
   },
   "dependencies": {
     "google-voice-client": "link:google-voice-client",
@@ -12,6 +13,7 @@
   },
   "devDependencies": {
     "@types/bun": "^1.4.0",
+    "playwright": "^1.62.1",
     "typescript": "^7.0.2"
   }
 }
