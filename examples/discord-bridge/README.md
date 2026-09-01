@@ -40,7 +40,7 @@ delivered to the phone.
 | `DISCORD_TOKEN` | Your Discord **user** token (selfbot) |
 | `BRIDGE_DM_USER_ID` | Discord user whose DM is bridged |
 | `BRIDGE_PHONE` | E.164 phone, e.g. `+14697590653` |
-| `GV_SEND_ATTESTATION_TOKEN` / `GV_SEND_RECAPTCHA_TOKEN` | Required for Discord→phone sends |
+| `GV_SEND_ATTESTATION_TOKEN` / `GV_SEND_RECAPTCHA_TOKEN` | Required for Discord→phone sends (auto-refreshed, see below) |
 
 ## Run
 
@@ -65,19 +65,26 @@ don't have to get the exact E.164 spelling right.
 ## Caveats
 
 - **Outbound sends need the WAA/BotGuard + reCAPTCHA tokens** Google's web
-   client mints (the SDK cannot fabricate them; they're live and short-lived,
-   so they need periodic re-capture). Grab a fresh pair with:
+   client mints (the SDK cannot fabricate them; they're session-recent and
+   expire in minutes-to-hours, so they need periodic re-capture). Refresh
+   them with:
 
    ```bash
-   bun run capture-tokens
+   bun run capture-tokens          # capture once
+   LOOP=1 bun run refresh-tokens-loop   # capture, then every REFRESH_MINUTES (default 60)
    ```
 
-   That opens a browser window — send a real text to any number there, and the
-   helper intercepts `sendsms`, extracts the token pair, and writes the two
-   `GV_SEND_*` vars into `.env`. (Driving the send fully headless isn't
-   reliable: Voice only mints tokens for *saved contacts* in its GUI, so a
-   raw-number compose doesn't fire a send.)
-   
+   `bin/refresh-tokens.ts` drives a real headless Chromium session against an
+   **existing** Voice thread for `BRIDGE_PHONE` (found by matching the
+   thread-list `itemId` to the phone's digits, not by contact-name text —
+   works whether or not the number is a saved Google Contact), sends
+   `[AUTOMATED] Refreshing tokens...` through it, intercepts the resulting
+   `sendsms` request for the token pair, and writes `GV_SEND_ATTESTATION_TOKEN`
+   / `GV_SEND_RECAPTCHA_TOKEN` into `.env`. Requires at least one prior
+   message already exchanged with `BRIDGE_PHONE` (a thread must already
+   exist — Voice's anti-abuse flow only mints tokens for a real send, and a
+   synthetic *new* conversation to a raw, non-contact number never fires).
+
    Without tokens the bridge logs that outbound is disabled and keeps
    forwarding inbound.
 - Selfbot libraries (here: `discord.js-selfbot-youtsuho-v13`, a fork of the
