@@ -1,5 +1,6 @@
-import { describe, expect, test } from "bun:test";
-import { extractCookieValue, loadEnv } from "../src/env";
+import { beforeEach, describe, expect, test } from "bun:test";
+import { readFileSync, rmSync, writeFileSync } from "node:fs";
+import { extractCookieValue, loadEnv, writeEnvCookie } from "../src/env";
 
 // If this fails: cookie parsing breaks on real-world Cookie header formats
 // (multiple cookies, values containing "=", missing target cookie).
@@ -56,5 +57,37 @@ describe("loadEnv", () => {
     delete process.env.GV_SAPISID;
     expect(() => loadEnv()).toThrow(/SAPISID/);
     resetEnv();
+  });
+});
+
+// If this fails: writeEnvCookie corrupts an existing .env (dropping other
+// lines or failing to replace the GV_COOKIE line), so a refreshed cookie
+// would silently be ignored or a stale one kept.
+describe("writeEnvCookie", () => {
+  const envPath = "/tmp/gv-ws-env-test.env";
+
+  beforeEach(() => rmSync(envPath, { force: true }));
+
+  test("creates the GV_COOKIE line in a nonexistent file", () => {
+    writeEnvCookie("A=B; C=D", envPath);
+    expect(readFileSync(envPath, "utf8")).toBe('GV_COOKIE="A=B; C=D"\n');
+  });
+
+  test("replaces an existing GV_COOKIE line, preserving other lines", () => {
+    writeFileSync(envPath, 'GV_API_KEY=key\nGV_COOKIE="oldvalue"\nGV_AUTH_USER=1\n');
+    writeEnvCookie("newvalue", envPath);
+    expect(readFileSync(envPath, "utf8")).toBe('GV_API_KEY=key\nGV_COOKIE="newvalue"\nGV_AUTH_USER=1\n');
+  });
+
+  test("appends GV_COOKIE when the file has no GV_COOKIE line yet", () => {
+    writeFileSync(envPath, "GV_API_KEY=key\n");
+    writeEnvCookie("value", envPath);
+    expect(readFileSync(envPath, "utf8")).toBe('GV_API_KEY=key\nGV_COOKIE="value"\n');
+  });
+
+  test("round-trips a cookie containing characters that look like quotes is preserved verbatim", () => {
+    writeEnvCookie("SAPISID=x-abc/123; SIDCC=zzz", envPath);
+    const written = readFileSync(envPath, "utf8");
+    expect(written).toContain('GV_COOKIE="SAPISID=x-abc/123; SIDCC=zzz"');
   });
 });

@@ -21,10 +21,12 @@
     "build": "rm -rf dist && bun build ./src/index.ts --outdir dist --target node --format esm && tsc",
     "test": "bun test",
     "typecheck": "tsc --noEmit",
+    "refresh-cookies": "bun run bin/refresh-cookies.ts",
     "prepublishOnly": "bun run typecheck && bun run test && bun run build"
   },
   "devDependencies": {
     "@types/bun": "latest",
+    "playwright": "^1.62.1",
     "typescript": "^5.7.0"
   },
   "engines": {
@@ -35,5 +37,13 @@
   },
   "dependencies": {
     "sharp": "^0.35.4"
+  },
+  "peerDependencies": {
+    "playwright": "^1.62.1"
+  },
+  "peerDependenciesMeta": {
+    "playwright": {
+      "optional": true
+    }
   }
 }

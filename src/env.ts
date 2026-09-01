@@ -1,3 +1,5 @@
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+
 /**
  * Reads the Google Voice session credentials this client needs from the
  * process environment (populated from `.env` by the caller / bun's
@@ -66,4 +68,30 @@ export function loadEnv(): GoogleVoiceEnv {
     authUser: process.env.GV_AUTH_USER ?? "0",
     clientVersion: process.env.GV_CLIENT_VERSION ?? "967950005",
   };
+}
+
+/**
+ * Writes (or updates in place) the `GV_COOKIE=` line of an `.env` file,
+ * leaving every other line untouched. Used to persist a cookie obtained
+ * from {@link refreshCookies} so the next `loadEnv()` call picks it up.
+ *
+ * @precondition None; `envPath` need not already exist.
+ * @postcondition `envPath` contains exactly one `GV_COOKIE=` line, set to
+ *   `cookie` (double-quoted, since cookie headers routinely contain `;`),
+ *   and ends with a trailing newline.
+ */
+export function writeEnvCookie(cookie: string, envPath = ".env"): void {
+  const line = `GV_COOKIE="${cookie}"`;
+  const existing = existsSync(envPath) ? readFileSync(envPath, "utf8") : "";
+  // split keeps a trailing empty element when the file ends in "\n"; strip it
+  // so re-joining doesn't produce a stray blank line, then re-add "\n" at end.
+  const lines = existing.length > 0 ? existing.split("\n") : [""];
+  if (lines[lines.length - 1] === "") lines.pop();
+  const index = lines.findIndex((l) => l.startsWith("GV_COOKIE="));
+  if (index >= 0) {
+    lines[index] = line;
+  } else {
+    lines.push(line);
+  }
+  writeFileSync(envPath, lines.join("\n") + "\n");
 }
