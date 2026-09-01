@@ -18,6 +18,7 @@
 import { existsSync, readdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import type { ExportedCookie } from "@mherod/get-cookie";
 import type { GoogleVoiceEnv } from "./env";
 import { readFirefoxSession } from "./firefox";
 import type { RefreshedCookies } from "./refresh";
@@ -160,20 +161,18 @@ async function readAllBrowsers(): Promise<RefreshedCookies | undefined> {
   return undefined;
 }
 
-/** Structural subset of `@mherod/get-cookie`'s `ExportedCookie` we consume. */
-interface CookieLike {
-  name: string;
-  value: unknown;
-  domain?: string;
-}
+// The module surface is declared in src/get-cookie-env.d.ts, so tsc resolves
+// it whether or not the optional peer is installed; `import()` is dynamic so
+// the runtime never loads it unless a Chromium-family/Safari read is needed.
+type GetCookieModule = typeof import("@mherod/get-cookie");
 
 /** Reads a Chromium-family browser via the optional `@mherod/get-cookie` peer. */
 async function readChromiumLike(
   browser: Exclude<SupportedBrowser, "firefox" | "zen" | "safari">,
 ): Promise<RefreshedCookies> {
   const mod = await loadGetCookie();
-  const strategy = new mod.ChromiumCookieQueryStrategy(GET_COOKIE_BROWSER_ALIAS[browser] as never);
-  const cookies = (await strategy.queryCookies("%", "google.com")) as unknown as CookieLike[];
+  const strategy = new mod.ChromiumCookieQueryStrategy(GET_COOKIE_BROWSER_ALIAS[browser]);
+  const cookies = await strategy.queryCookies("%", "google.com");
   return cookiesToHeader(cookies);
 }
 
@@ -181,7 +180,7 @@ async function readChromiumLike(
 async function readSafari(): Promise<RefreshedCookies> {
   const mod = await loadGetCookie();
   const strategy = new mod.SafariCookieQueryStrategy();
-  const cookies = (await strategy.queryCookies("%", "google.com")) as unknown as CookieLike[];
+  const cookies = await strategy.queryCookies("%", "google.com");
   return cookiesToHeader(cookies);
 }
 
@@ -194,7 +193,7 @@ async function readSafari(): Promise<RefreshedCookies> {
  *   (not static) because this is an optional peer dependency most consumers
  *   never install.
  */
-async function loadGetCookie(): Promise<typeof import("@mherod/get-cookie")> {
+async function loadGetCookie(): Promise<GetCookieModule> {
   try {
     return await import("@mherod/get-cookie");
   } catch {
@@ -206,7 +205,7 @@ async function loadGetCookie(): Promise<typeof import("@mherod/get-cookie")> {
 }
 
 /** Turns browser-cookie rows into a Cookie header + extracted SAPISID. */
-function cookiesToHeader(cookies: CookieLike[]): RefreshedCookies {
+function cookiesToHeader(cookies: ExportedCookie[]): RefreshedCookies {
   const header = cookies
     .map((c) => `${c.name}=${typeof c.value === "string" ? c.value : JSON.stringify(c.value)}`)
     .join("; ");
