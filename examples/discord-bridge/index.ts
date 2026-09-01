@@ -25,6 +25,7 @@
  *   BRIDGE_DM_USER_ID                       Discord user who is bridged
  *   BRIDGE_PHONE                            E.164 phone (e.g. +14697590653)
  *   GV_SEND_ATTESTATION_TOKEN / GV_SEND_RECAPTCHA_TOKEN  optional send tokens
+ *   DEBUG=1                                 verbose logging of every event/filter
  */
 import { Client } from "discord.js-selfbot-youtsuho-v13";
 import { GoogleVoiceClient, loadEnv } from "google-voice-client";
@@ -66,6 +67,17 @@ const config = loadConfig();
 const voice = new GoogleVoiceClient(voiceEnv);
 const discord = new Client();
 
+/**
+ * Debug logger: enabled when `DEBUG=1` (or `DEBUG=true`) is set in env.
+ * Prints every Voice event and Discord filter decision so a bridge that
+ * isn't relaying can be diagnosed.
+ */
+const debug = (...args: unknown[]): void => {
+  if (process.env.DEBUG === "1" || process.env.DEBUG === "true") {
+    console.log("[debug]", ...args);
+  }
+};
+
 function stripLeadingMention(content: string): string {
   // A bridged user replying to our forwarded message quotes it with a
   // <@...> prefix — drop it so we don't echo the pinging mention to the phone.
@@ -87,18 +99,33 @@ discord.once("ready", async () => {
 // Voice → Discord: forward incoming SMS/MMS from the bridged number into the
 // DM you share with the bridged user.
 voice.on("messageCreate", async (event) => {
-  if (event.direction !== "RECEIVED") return;
-  if (event.otherPartyNumber !== config.phoneNumber) return;
+  debug("voice messageCreate:", {
+    direction: event.direction,
+    otherParty: event.otherPartyNumber,
+    wantParty: config.phoneNumber,
+    text: (event.text || "").slice(0, 80),
+    hasAttachment: event.attachments.length > 0,
+  });
+  if (event.direction !== "RECEIVED") {
+    debug("→ skip: direction is", event.direction, "not RECEIVED");
+    return;
+  }
+  if (event.otherPartyNumber !== config.phoneNumber) {
+    debug("→ skip: otherParty", event.otherPartyNumber, "!= bridged", config.phoneNumber);
+    return;
+  }
   try {
     const user = await discord.users.fetch(config.dmUserId);
     const dm = await user.createDM();
-    let body = event.text || "(message with no text)";
+    const body = event.text || "(message with no text)";
     const attachment = event.attachments[0];
     if (attachment) {
       const { data, contentType } = await voice.downloadAttachment(attachment.id);
       const name = `attachment.${contentType.split("/")[1] ?? "bin"}`;
+      debug("forwarding attachment to discord:", name, contentType, data.byteLength, "bytes");
       await dm.send({ content: body, files: [{ attachment: Buffer.from(data), name }] });
     } else {
+      debug("forwarding text to discord:", JSON.stringify(body));
       await dm.send(body);
     }
     console.log(`[voice→discord] ${event.text || "<attachment>"}`);
@@ -117,16 +144,35 @@ voice.on("disconnect", (error) => {
 // Must ignore the selfbot's OWN messages (including its voice forwards),
 // else we'd echo every forward back to the phone in a loop.
 discord.on("messageCreate", async (message) => {
-  if (message.author.id === discord.user?.id) return; // self — never loop
-  if (message.author.id !== config.dmUserId) return; // only the bridged user
-  if (message.channel.type !== "DM" && message.channel.type !== "GROUP") return;
+  debug("discord messageCreate:", {
+    author: message.author?.id,
+    self: discord.user?.id,
+    channelType: message.channel?.type,
+    content: (message.content || "").slice(0, 80),
+  });
+  if (message.author.id === discord.user?.id) {
+    debug("→ skip: own message (would loop)");
+    return;
+  }
+  if (message.author.id !== config.dmUserId) {
+    debug("→ skip: author", message.author.id, "!= bridged", config.dmUserId);
+    return;
+  }
+  if (message.channel.type !== "DM" && message.channel.type !== "GROUP") {
+    debug("→ skip: not a DM channel (type", message.channel.type, ")");
+    return;
+  }
   if (!config.sendTokens) {
     console.warn("Outbound send skipped: no send tokens configured.");
     return;
   }
   const text = stripLeadingMention(message.content);
-  if (!text) return;
+  if (!text) {
+    debug("→ skip: empty content after stripping mention");
+    return;
+  }
   try {
+    debug("sending to phone:", config.threadId, JSON.stringify(text));
     await voice.sendMessage(config.threadId, text, String(Date.now()), {
       tokens: config.sendTokens,
     });

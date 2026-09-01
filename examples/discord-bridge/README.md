@@ -75,3 +75,18 @@ bun run start
   archived `discord.js-selfbot-v13`) track Discord API changes loosely; a
   Discord update may break login until the fork catches up. See the fork's
   GitHub for the latest state.
+
+## Troubleshooting
+
+Set `DEBUG=1` in the bridge `.env` and restart for verbose logs of every
+Voice event and Discord message, plus each filter decision (direction check,
+phone-match, own-message loop guard, DM-channel check). If a Voice message
+isn't relaying, the debug output will show which check rejected it — a common
+cause is `BRIDGE_PHONE` not matching the sender's number exactly (e.g. `+` vs
+no `+`, or a country-code difference).
+
+Run with:
+
+```bash
+DEBUG=1 bun run start
+```
