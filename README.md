@@ -1,4 +1,4 @@
-# google-voice-ws
+# google-voice-client
 
 Unofficial client for Google Voice's internal web API. Send and receive SMS/MMS, list threads, and download attachments by replaying an authenticated browser session — no public API key required.
 
@@ -15,18 +15,18 @@ Unofficial client for Google Voice's internal web API. Send and receive SMS/MMS,
 ## Install
 
 ```bash
-bun add google-voice-ws
+bun add google-voice-client
 ```
 
 ## Quick start
 
 ```ts
-import { GoogleVoiceClient, loadEnv } from "google-voice-ws";
+import { GoogleVoiceClient, loadEnv } from "google-voice-client";
 
 const client = new GoogleVoiceClient(loadEnv());
 
 // Send a text message
-await client.sendMessage("t.+15551234567", "Hello from google-voice-ws", String(Date.now()), {
+await client.sendMessage("t.+15551234567", "Hello from google-voice-client", String(Date.now()), {
   tokens: { attestationToken, recaptchaToken }, // see auth notes below
 });
 
@@ -38,6 +38,38 @@ for (const t of threads) {
   }
 }
 ```
+
+## Events (discord.js-style)
+
+`GoogleVoiceClient` extends `EventEmitter` — subscribe with `client.on(...)`:
+
+```ts
+import { GoogleVoiceClient, loadEnv } from "google-voice-client";
+
+const client = new GoogleVoiceClient(loadEnv());
+
+client.on("ready", (threads) => console.log(`Connected, ${threads} threads`));
+client.on("messageCreate", (message) => {
+  console.log(`New ${message.direction} message from ${message.otherPartyNumber}: ${message.text}`);
+});
+client.on("messageUpdate", (message, before) => {
+  console.log(`Message ${message.id} changed: ${before.text} -> ${message.text}`);
+});
+client.on("disconnect", (error) => console.error("Session failed:", error.message));
+client.on("messageSend", (threadId, text) => console.log(`Sent to ${threadId}: ${text}`));
+
+// Start the background poll loop
+await client.start(); // default interval 5s; pass { intervalMs } to tune
+```
+
+**Note:** Google Voice delivers SMS over HTTP polling, not a push websocket, so
+"events" are discovered by periodically re-fetching `listThreads()` and diffing
+snapshots. `client.start()` begins that loop; `client.stop()` ends it. A poll
+error (e.g. an expired cookie) emits `disconnect` and stops the loop — call
+`start()` again after refreshing credentials (see below).
+
+Available events: `ready`, `messageCreate`, `messageUpdate`, `disconnect`,
+`messageSend`.
 
 ## Authentication
 
@@ -76,7 +108,9 @@ await client.sendMessage(threadId, text, tmpId, {
 });
 ```
 
-Replay a token pair from a recent capture (they're session-recent, not message-bound — replaying with different text works for a short window), or obtain fresh ones via the browser refresh flow.
+Replay a token pair from a recent capture — they're session-recent, not
+message-bound (replaying with different text works for a short window). Obtain
+fresh ones via the cookie refresh flow above; the SDK does not mint them.
 
 ## API
 
@@ -85,6 +119,8 @@ Replay a token pair from a recent capture (they're session-recent, not message-b
 | `GoogleVoiceClient.sendMessage(threadId, text, tmpId, opts?)` | Send an SMS/MMS (photo via `opts.attachment`) |
 | `GoogleVoiceClient.listThreads()` | List all threads + events |
 | `GoogleVoiceClient.downloadAttachment(id, sizeCode?)` | Fetch attachment bytes |
+| `client.on("messageCreate", cb)` | Subscribe to an event |
+| `client.start({ intervalMs? })` / `client.stop()` | Begin / end the event-discovery poll loop |
 | `readBrowserSession(browser?)` | Pull a session from an installed browser |
 | `refreshCookies(opts?)` | Headless Playwright session refresh |
 | `loadEnv()` / `writeEnvCookie()` | Read/write `.env` credentials |

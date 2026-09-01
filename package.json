@@ -1,9 +1,9 @@
 {
-  "name": "google-voice-ws",
+  "name": "google-voice-client",
   "version": "0.1.0",
   "repository": {
     "type": "git",
-    "url": "https://github.com/USERNAME/google-voice-ws.git"
+    "url": "https://github.com/USERNAME/google-voice-client.git"
   },
   "keywords": [
     "google-voice",

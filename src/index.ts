@@ -1,5 +1,5 @@
 /**
- * google-voice-ws entry point.
+ * google-voice-client entry point.
  *
  * @precondition None.
  * @postcondition Re-exports the public API of the library.
@@ -9,7 +9,8 @@ export const VERSION = "0.1.0";
 export { buildAuthorizationHeader, computeSapisidHash } from "./auth";
 export { compressImageToFit } from "./compress";
 export { GoogleVoiceClient } from "./client";
-export type { OutgoingAttachment, SendMessageOptions } from "./client";
+export type { OutgoingAttachment, SendMessageOptions, StartOptions } from "./client";
+export type { ClientEventMap, VoiceClientEvent } from "./events";
 export { extractCookieValue, loadEnv, writeEnvCookie, writeEnvVar } from "./env";
 export type { GoogleVoiceEnv } from "./env";
 export {
