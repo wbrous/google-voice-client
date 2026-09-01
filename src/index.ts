@@ -8,7 +8,7 @@ export const VERSION = "0.1.0";
 
 export { buildAuthorizationHeader, computeSapisidHash } from "./auth";
 export { compressImageToFit } from "./compress";
-export { GoogleVoiceClient } from "./client";
+export { GoogleVoiceClient, VoiceHttpError } from "./client";
 export type { OutgoingAttachment, SendMessageOptions, StartOptions } from "./client";
 export type { ClientEventMap, VoiceClientEvent } from "./events";
 export { extractCookieValue, loadEnv, writeEnvCookie, writeEnvVar } from "./env";

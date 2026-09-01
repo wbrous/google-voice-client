@@ -89,10 +89,32 @@ don't have to get the exact E.164 spelling right.
 
    Without tokens the bridge logs that outbound is disabled and keeps
    forwarding inbound.
+- **Transient Voice API errors (e.g. a `503`) don't kill the bridge.** The
+  poll loop retries automatically on its next tick (see
+  `GoogleVoiceClient.start`'s `maxConsecutiveFailures`, default 5). Only a
+  fatal auth failure (`401`/`403` — a stale session cookie) or a sustained
+  run of failures gives up; when that happens the bridge exits with a
+  non-zero code (see "Automatic restart" below) instead of hanging with a
+  dead poll loop.
 - Selfbot libraries (here: `discord.js-selfbot-youtsuho-v13`, a fork of the
   archived `discord.js-selfbot-v13`) track Discord API changes loosely; a
   Discord update may break login until the fork catches up. See the fork's
   GitHub for the latest state.
+
+## Automatic restart
+
+When the Voice poll loop gives up (`disconnect`), the bridge logs why and
+calls `process.exit(1)` rather than sitting idle with a dead loop. Run it
+under a process supervisor that restarts on a non-zero exit — e.g. Docker
+`restart: unless-stopped`/`on-failure`, or systemd `Restart=on-failure`.
+
+**This does not by itself refresh `GV_COOKIE`.** A restart recovers from
+transient outages and picks up whatever's currently in `.env`, but a
+genuinely expired session cookie still needs a real login to replace (see
+the main repo's browser/Firefox cookie readers, or `bun run capture-tokens`
+for the separate `GV_SEND_*` anti-abuse tokens). If your deployment can run
+a cookie refresh automatically before each restart (e.g. a Docker entrypoint
+script), wire it there; that step isn't automated by this bridge.
 
 ## Troubleshooting
 

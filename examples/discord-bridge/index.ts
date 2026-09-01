@@ -236,10 +236,30 @@ voice.on("messageCreate", async (event) => {
   }
 });
 
-// Voice auth failure — surfacing it beats silent message loss.
+// Transient poll failures (e.g. a 503 blip) are retried automatically by
+// the client and don't stop the loop — surface them only under DEBUG so a
+// flaky network doesn't spam the console.
+voice.on("pollError", (error, consecutiveFailures) => {
+  debug("voice pollError:", error.message, `(${consecutiveFailures} in a row)`);
+});
+
+// The poll loop gives up after either a fatal auth error (401/403 — the
+// session cookie is stale) or too many transient failures in a row. Rather
+// than hang with a dead poll loop until someone notices and manually
+// restarts, exit non-zero so a process supervisor (Docker `restart:
+// unless-stopped`, systemd `Restart=on-failure`, etc.) restarts the bridge.
+// Note: this does NOT refresh GV_COOKIE by itself — a genuinely expired
+// session cookie needs a real login (see the main repo's browser/firefox
+// cookie readers or a fresh manual capture) before a restart can recover.
 voice.on("disconnect", (error) => {
   console.error("[voice] disconnected:", error.message);
-  console.error("Refresh the session cookie (.env) and restart.");
+  console.error("[voice] exiting so a process supervisor can restart the bridge.");
+  try {
+    void Promise.resolve(discord.destroy()).catch(() => {});
+  } catch {
+    // ignore — see the SIGINT handler's comment on this same call
+  }
+  process.exit(1);
 });
 
 // Discord → Voice: forward a DM from the bridged user to the phone.

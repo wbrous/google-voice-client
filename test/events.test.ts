@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { GoogleVoiceClient } from "../src/client";
+import { GoogleVoiceClient, VoiceHttpError } from "../src/client";
 import type { GoogleVoiceEnv } from "../src/env";
 import type { Thread, ThreadEvent } from "../src/types";
 
@@ -127,7 +127,7 @@ describe("GoogleVoiceClient poll loop", () => {
   test("emits disconnect and stops polling on a listThreads error", async () => {
     const client = new GoogleVoiceClient(fakeEnv());
     (client as unknown as { listThreads: () => Promise<Thread[]> }).listThreads = async () => {
-      throw new Error("401 Unauthorized");
+      throw new VoiceHttpError("401 Unauthorized", 401);
     };
 
     const errors: Error[] = [];

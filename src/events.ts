@@ -32,9 +32,21 @@ export interface ClientEventMap {
    */
   messageUpdate: [message: ThreadEvent, before: ThreadEvent];
   /**
-   * Emitted when the poll loop hits an HTTP/auth error (typically a stale
-   * 401 cookie). The loop stops polling; call {@link GoogleVoiceClient.start}
-   * to restart after refreshing credentials.
+   * Emitted when a poll tick fails (any HTTP or network error). The loop
+   * keeps retrying on its normal interval unless the failure is a fatal
+   * auth error (401/403) or `consecutiveFailures` reaches the configured
+   * limit — in either case `disconnect` follows immediately after.
+   * @param error the failure from this tick.
+   * @param consecutiveFailures how many poll ticks have failed in a row,
+   *   including this one. Resets to 0 on the next successful tick.
+   */
+  pollError: [error: Error, consecutiveFailures: number];
+  /**
+   * Emitted when the poll loop gives up: either a fatal auth error (401/403
+   * — typically a stale session cookie, retrying won't help) or
+   * `consecutiveFailures` transient errors in a row. The loop stops
+   * polling; call {@link GoogleVoiceClient.start} to restart after
+   * refreshing credentials.
    * @param error the failure that stopped the loop.
    */
   disconnect: [error: Error];

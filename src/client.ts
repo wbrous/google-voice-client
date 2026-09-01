@@ -14,6 +14,22 @@ const REQUEST_ORIGIN = "https://clients6.google.com";
 const ATTACHMENT_TYPE_PHOTO = 2;
 
 /**
+ * An HTTP error from a Google Voice API request, carrying the response
+ * status so callers (notably the poll loop) can distinguish a fatal auth
+ * failure (401/403 — the session cookie is stale) from a transient one
+ * (5xx, rate limiting) worth retrying.
+ */
+export class VoiceHttpError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+    this.name = "VoiceHttpError";
+  }
+}
+
+/**
  * Default cap on outgoing attachment size (raw bytes, before base64).
  * A live capture showed an ~11 MB attachment rejected with
  * `INVALID_ARGUMENT` and a ~400 KB one succeed; the exact server-side
@@ -54,6 +70,12 @@ export interface StartOptions {
    * messages. Default `5000`.
    */
   intervalMs?: number;
+  /**
+   * How many poll ticks may fail in a row (transient errors only — a fatal
+   * 401/403 stops the loop immediately regardless of this count) before the
+   * loop gives up and emits `disconnect`. Default `5`.
+   */
+  maxConsecutiveFailures?: number;
 }
 
 /**
@@ -136,7 +158,7 @@ export class GoogleVoiceClient extends EventEmitter implements VoiceClient {
       body,
     });
     if (!res.ok) {
-      throw new Error(`api2thread/list failed: ${res.status} ${res.statusText}`);
+      throw new VoiceHttpError(`api2thread/list failed: ${res.status} ${res.statusText}`, res.status);
     }
     const responseBody = await res.json();
     return parseThreadListResponse(responseBody);
@@ -229,7 +251,7 @@ export class GoogleVoiceClient extends EventEmitter implements VoiceClient {
       body,
     });
     if (!res.ok) {
-      throw new Error(`api2thread/sendsms failed: ${res.status} ${res.statusText}`);
+      throw new VoiceHttpError(`api2thread/sendsms failed: ${res.status} ${res.statusText}`, res.status);
     }
     const result = await res.json();
     this.emit("messageSend", threadId, text);
@@ -241,23 +263,39 @@ export class GoogleVoiceClient extends EventEmitter implements VoiceClient {
    * the first snapshot, then `messageCreate` / `messageUpdate` per poll tick
    * as the thread-cache differs from the previous one.
    *
+   * A poll tick that fails with a transient error (network failure, 5xx,
+   * rate limiting) does NOT stop the loop — it emits `pollError` and simply
+   * retries on the next tick, up to `options.maxConsecutiveFailures` in a
+   * row. A 401/403 (stale session cookie) is treated as fatal immediately,
+   * since retrying an expired cookie can't succeed.
+   *
    * @precondition Valid, unexpired credentials (see {@link GoogleVoiceEnv}).
    * @postcondition Poll timer running; `ready` emitted once the first
    *   snapshot lands.
    * @emits `ready` on startup; `messageCreate` / `messageUpdate` on diffs;
-   *   `disconnect` on a poll error (stops the loop).
+   *   `pollError` on any failed tick; `disconnect` when the loop gives up
+   *   (stops the loop).
    */
   async start(options: StartOptions = {}): Promise<void> {
     if (this.pollTimer) return;
     const intervalMs = options.intervalMs ?? 5000;
+    const maxConsecutiveFailures = options.maxConsecutiveFailures ?? 5;
+    let consecutiveFailures = 0;
 
     const tick = async (): Promise<void> => {
       let threads: Thread[];
       try {
         threads = await this.listThreads();
-      } catch (error) {
-        this.stop();
-        this.emit("disconnect", error instanceof Error ? error : new Error(String(error)));
+        consecutiveFailures = 0;
+      } catch (rawError) {
+        const error = rawError instanceof Error ? rawError : new Error(String(rawError));
+        consecutiveFailures++;
+        this.emit("pollError", error, consecutiveFailures);
+        const isAuthFailure = error instanceof VoiceHttpError && (error.status === 401 || error.status === 403);
+        if (isAuthFailure || consecutiveFailures >= maxConsecutiveFailures) {
+          this.stop();
+          this.emit("disconnect", error);
+        }
         return;
       }
       const next = new Map<string, ThreadEvent>();
