@@ -67,15 +67,30 @@ interface BridgeConfig {
   discordToken: string;
   dmUserId: string;
   phoneNumber: string;
+  /**
+   * The Google Contact profile image URL for the bridged phone. Used to
+   * display the phone's avatar next to forwarded messages and (in the
+   * automated token-refresh) to verify the right contact was selected in the
+   * Voice composer — a mismatched avatar means the wrong thread was chosen.
+   */
+  contactImage?: string;
   /** Resolved lazily/once from the live API (see resolveThreadId). */
   threadId?: string;
   sendTokens?: { attestationToken: string; recaptchaToken: string };
+  /** Seconds between Voice poll cycles. Defaults to 5. */
+  pollIntervalSec: number;
 }
 
 function env(name: string): string {
   const v = process.env[name];
   if (!v) throw new Error(`Missing required environment variable ${name}`);
   return v;
+}
+
+/** Optional env that yields `undefined` when unset (no throw). */
+function optEnv(name: string): string | undefined {
+  const v = process.env[name];
+  return v && v.length > 0 ? v : undefined;
 }
 
 /**
@@ -100,13 +115,13 @@ function numbersMatch(have: string, want: string): boolean {
   const b = want.replace(/\D/g, "");
   return a === b || a.endsWith(b) || b.endsWith(a);
 }
-
 function loadConfig(): BridgeConfig {
   const phoneNumber = toE164(env("BRIDGE_PHONE"));
   return {
     discordToken: env("DISCORD_TOKEN"),
     dmUserId: env("BRIDGE_DM_USER_ID"),
     phoneNumber,
+    contactImage: optEnv("BRIDGE_CONTACT_IMAGE"),
     sendTokens:
       process.env.GV_SEND_ATTESTATION_TOKEN && process.env.GV_SEND_RECAPTCHA_TOKEN
         ? {
@@ -114,6 +129,7 @@ function loadConfig(): BridgeConfig {
             recaptchaToken: process.env.GV_SEND_RECAPTCHA_TOKEN,
           }
         : undefined,
+    pollIntervalSec: Number(optEnv("GV_POLL_INTERVAL_SEC") ?? "5"),
   };
 }
 
@@ -180,7 +196,7 @@ async function fetchDiscordAttachment(
 
 discord.once("ready", async () => {
   console.log(`Selfbot online as ${discord.user?.username}`);
-  await voice.start({ intervalMs: 5000 });
+  await voice.start({ intervalMs: config.pollIntervalSec * 1000 });
   console.log("Voice poll loop started. Bridging", config.phoneNumber, "<->", config.dmUserId);
   if (!config.sendTokens) {
     console.warn(
@@ -213,14 +229,23 @@ voice.on("messageCreate", async (event) => {
     const dm = await user.createDM();
     const body = event.text || "(message with no text)";
     const attachment = event.attachments[0];
+    // When BRIDGE_CONTACT_IMAGE is set, attach a small embed showing the
+    // contact's avatar + phone so forwarded messages are clearly identifiable
+    // (and a wrong source is easy to spot).
+    const embed = config.contactImage
+      ? {
+          author: { name: config.phoneNumber, iconURL: config.contactImage },
+          color: 0x34a853, // Google green
+        }
+      : undefined;
     if (attachment) {
       const { data, contentType } = await voice.downloadAttachment(attachment.id);
       const name = `attachment.${contentType.split("/")[1] ?? "bin"}`;
       debug("forwarding attachment to discord:", name, contentType, data.byteLength, "bytes");
-      await dm.send({ content: body, files: [{ attachment: Buffer.from(data), name }] });
+      await dm.send({ content: body, files: [{ attachment: Buffer.from(data), name }], embeds: embed ? [embed] : [] });
     } else {
       debug("forwarding text to discord:", JSON.stringify(body));
-      await dm.send(body);
+      await dm.send({ content: body, embeds: embed ? [embed] : [] });
     }
     console.log(`[voice→discord] ${event.text || "<attachment>"}`);
   } catch (err) {
