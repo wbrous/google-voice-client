@@ -1,8 +1,17 @@
 {
   "name": "google-voice-ws",
   "version": "0.1.0",
-  "description": "Unofficial client for Google Voice's internal web API",
-  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/USERNAME/google-voice-ws.git"
+  },
+  "keywords": [
+    "google-voice",
+    "sms",
+    "mms",
+    "websocket",
+    "unofficial-api"
+  ],
   "type": "module",
   "module": "dist/index.js",
   "main": "dist/index.js",

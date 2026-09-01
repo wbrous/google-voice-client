@@ -1,7 +1,22 @@
+# Dependencies
 node_modules/
+
+# Build output
 dist/
-*.log
-.DS_Store
-*.har
+*.tsbuildinfo
+
+# Sensitive credentials & captured sessions
 .env
+.env.*.local
+*.har
 .gv-browser-profile/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.swp
