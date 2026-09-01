@@ -13,7 +13,7 @@
         "typescript": "^5.7.0",
       },
       "peerDependencies": {
-        "@mherod/get-cookie": "^4.5.0",
+        "@mherod/get-cookie": "",
         "playwright": "^1.62.1",
       },
       "optionalPeers": [

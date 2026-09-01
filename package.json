@@ -48,7 +48,7 @@
     "sharp": "^0.35.4"
   },
   "peerDependencies": {
-    "@mherod/get-cookie": "^4.5.0",
+    "@mherod/get-cookie": "",
     "playwright": "^1.62.1"
   },
   "peerDependenciesMeta": {

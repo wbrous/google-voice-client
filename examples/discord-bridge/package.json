@@ -5,6 +5,9 @@
   "type": "module",
   "scripts": {
     "start": "bun --env-file=.env run index.ts",
+    "login": "bun run bin/login.ts",
+    "cookies:export": "bun run bin/cookies.ts export",
+    "cookies:import": "bun run bin/cookies.ts import",
     "capture-tokens": "bun --env-file=.env run bin/refresh-tokens.ts",
     "refresh-tokens-loop": "LOOP=1 bun --env-file=.env run bin/refresh-tokens.ts"
   },
