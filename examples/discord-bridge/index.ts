@@ -31,6 +31,38 @@
 import { Client } from "discord.js-selfbot-youtsuho-v13";
 import { GoogleVoiceClient, loadEnv } from "google-voice-client";
 
+/**
+ * Workaround for a bug in discord.js-selfbot-youtsuho-v13: Util.getUploadURL
+ * computes Discord's `file_size` from `file.byteLength ?? file.size`, but the
+ * file objects it receives are MessagePayload wrappers whose actual bytes sit
+ * at `file.file` — so it always sends `file_size: 0` and Discord rejects the
+ * upload with "files[0].file_size: int value should be greater than or equal
+ * to 1". Rebind getUploadURL to fall back to the inner bytes.
+ */
+// The fork's internal Util is CommonJS; `import * as` yields a frozen ESM
+// namespace we can't rebind, so grab a mutable reference via CJS require.
+import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
+const Util = require("discord.js-selfbot-youtsuho-v13/src/util/Util") as {
+  getUploadURL: (
+    client: unknown,
+    channelId: string,
+    files: Array<{ file?: { byteLength?: number }; byteLength?: number; size?: number }>,
+  ) => Promise<unknown>;
+};
+const origGetUploadURL = Util.getUploadURL.bind(Util);
+Util.getUploadURL = async (
+  client: unknown,
+  channelId: string,
+  files: Array<{ file?: { byteLength?: number }; byteLength?: number; size?: number }>,
+) => {
+  const sized = files.map((f) => ({
+    ...f,
+    byteLength: f.file?.byteLength ?? f.byteLength ?? 0,
+  }));
+  return origGetUploadURL(client, channelId, sized);
+};
+
 interface BridgeConfig {
   discordToken: string;
   dmUserId: string;
