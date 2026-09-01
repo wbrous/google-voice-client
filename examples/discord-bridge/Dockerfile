@@ -10,6 +10,9 @@
 FROM oven/bun:1 AS base
 WORKDIR /repo
 
+# Native addons (e.g. better-sqlite3 via discord.js) need a C++ toolchain.
+RUN apt-get update && apt-get install -y --no-install-recommends python3 make g++ && rm -rf /var/lib/apt/lists/*
+
 # --- Build the library ---------------------------------------------------
 COPY package.json bun.lock tsconfig.json ./
 RUN bun install --frozen-lockfile
@@ -22,10 +25,10 @@ RUN bun link
 
 # --- Install the bridge ---------------------------------------------------
 WORKDIR /repo/examples/discord-bridge
-COPY examples/discord-bridge/package.json examples/discord-bridge/bun.lock ./
+COPY examples/discord-bridge/package.json ./
 # Resolves the bridge's "google-voice-client": "link:google-voice-client"
 # dependency against the link registered above.
-RUN bun install --frozen-lockfile
+RUN bun install
 COPY examples/discord-bridge/tsconfig.json ./
 COPY examples/discord-bridge/index.ts ./
 COPY examples/discord-bridge/bin ./bin
