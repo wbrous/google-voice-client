@@ -106,15 +106,65 @@ don't have to get the exact E.164 spelling right.
 When the Voice poll loop gives up (`disconnect`), the bridge logs why and
 calls `process.exit(1)` rather than sitting idle with a dead loop. Run it
 under a process supervisor that restarts on a non-zero exit — e.g. Docker
-`restart: unless-stopped`/`on-failure`, or systemd `Restart=on-failure`.
+`restart: unless-stopped`/`on-failure`, or systemd `Restart=on-failure`. See
+"Docker Compose" below for a ready-made setup that also keeps `GV_SEND_*`
+tokens refreshed automatically.
 
-**This does not by itself refresh `GV_COOKIE`.** A restart recovers from
-transient outages and picks up whatever's currently in `.env`, but a
-genuinely expired session cookie still needs a real login to replace (see
-the main repo's browser/Firefox cookie readers, or `bun run capture-tokens`
-for the separate `GV_SEND_*` anti-abuse tokens). If your deployment can run
-a cookie refresh automatically before each restart (e.g. a Docker entrypoint
-script), wire it there; that step isn't automated by this bridge.
+**A restart alone does not refresh `GV_COOKIE`.** It recovers from transient
+outages and picks up whatever's currently in `.env`, but a genuinely expired
+session cookie still needs a real login to replace (see the main repo's
+browser/Firefox cookie readers, or a fresh manual capture).
+
+## Docker Compose
+
+`docker-compose.yml` + `Dockerfile` build the parent `google-voice-client`
+library from source (no npm publish needed — mirrors the local dev
+workflow's `bun link`) and run two services from one image:
+
+- **`bridge`** — the always-on Voice↔Discord relay (`bun run start`).
+- **`refresh-tokens`** — runs `bin/refresh-tokens.ts --loop` in the same
+  container image, re-capturing `GV_SEND_ATTESTATION_TOKEN`/
+  `GV_SEND_RECAPTCHA_TOKEN` every `REFRESH_MINUTES` (default 60) and writing
+  them into the shared `.env`. `bridge` re-reads that file fresh on every
+  outbound send (not just once at startup), so a refresh here takes effect
+  without restarting `bridge`.
+
+### One-time setup
+
+`refresh-tokens` drives a *headless* browser — it cannot perform an initial
+interactive Google login (2FA, consent screens, etc.). Before bringing the
+stack up, create an authenticated profile the normal way, from this
+directory, with a **visible** browser:
+
+```bash
+HEADLESS=0 bun run capture-tokens
+```
+
+This populates `.gv-browser-profile/` with a logged-in session. Docker
+Compose bind-mounts that same directory into the `refresh-tokens` container
+read-write, so it reuses this login indefinitely (no further interactive
+step, as long as Google doesn't invalidate the session).
+
+### Build and run
+
+```bash
+docker compose --env-file /dev/null up --build
+```
+
+**The `--env-file /dev/null` is required, not optional.** Compose
+auto-loads a `.env` next to `docker-compose.yml` to interpolate `${VAR}`
+references *inside the compose YAML itself* — a completely different
+mechanism from this bridge's own `.env` (loaded at runtime via
+`bun --env-file=.env`). Since this bridge's real `.env` contains cookie
+values that routinely contain literal `$` characters, letting Compose parse
+it for its own interpolation throws spurious "variable is not set" warnings
+at best and can hang on a password prompt from a *different* tool at worst.
+Pointing Compose at `/dev/null` disables that unrelated parsing; nothing in
+`docker-compose.yml` actually uses `${VAR}` substitution.
+
+Both services bind-mount `./.env` read-write from this directory, so
+`refresh-tokens`'s writes and `bridge`'s reads share the same file the local
+(non-Docker) workflow already uses.
 
 ## Troubleshooting
 

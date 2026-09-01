@@ -1,0 +1,37 @@
+name: google-voice-discord-bridge
+
+# Two services sharing one image (see Dockerfile):
+#   bridge          - the always-on Voice<->Discord relay.
+#   refresh-tokens  - a sidecar that re-captures the WAA/reCAPTCHA send
+#                     tokens every REFRESH_MINUTES and writes them into the
+#                     shared .env file. `bridge` re-reads that file on every
+#                     outbound send (see index.ts's readSendTokens), so a
+#                     refresh here is picked up without restarting `bridge`.
+#
+# `refresh-tokens` REQUIRES a `.gv-browser-profile` that was already
+# authenticated with a real, interactive (non-headless) Google login before
+# you bring this up — see the README's "Docker Compose" section. It cannot
+# perform that first login itself.
+services:
+  bridge:
+    build:
+      context: ../..
+      dockerfile: examples/discord-bridge/Dockerfile
+    image: google-voice-discord-bridge
+    command: ["bun", "run", "start"]
+    volumes:
+      - ./.env:/repo/examples/discord-bridge/.env
+    restart: unless-stopped
+
+  refresh-tokens:
+    build:
+      context: ../..
+      dockerfile: examples/discord-bridge/Dockerfile
+    image: google-voice-discord-bridge
+    command: ["bun", "run", "refresh-tokens-loop"]
+    environment:
+      HEADLESS: "1"
+    volumes:
+      - ./.env:/repo/examples/discord-bridge/.env
+      - ./.gv-browser-profile:/repo/examples/discord-bridge/.gv-browser-profile
+    restart: unless-stopped

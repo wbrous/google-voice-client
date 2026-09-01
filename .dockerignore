@@ -1,0 +1,11 @@
+.git/
+.github/
+.gv-browser-profile/
+.omp/
+node_modules/
+dist/
+*.har
+.env
+.env.*.local
+examples/discord-bridge/node_modules/
+examples/discord-bridge/.env

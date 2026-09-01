@@ -32,6 +32,7 @@
  *   GV_POLL_INTERVAL_SEC                   Voice poll interval (default 5)
  *   DEBUG=1                                 verbose logging of every event/filter
  */
+import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { Client } from "discord.js-selfbot-youtsuho-v13";
 import { GoogleVoiceClient, loadEnv } from "google-voice-client";
@@ -74,7 +75,6 @@ interface BridgeConfig {
   phoneNumber: string;
   /** Resolved lazily/once from the live API (see resolveThreadId). */
   threadId?: string;
-  sendTokens?: { attestationToken: string; recaptchaToken: string };
   /** Seconds between Voice poll cycles. Defaults to 5. */
   pollIntervalSec: number;
 }
@@ -96,6 +96,49 @@ function toE164(raw: string): string {
   return `+${raw.replace(/\D/g, "")}`;
 }
 
+/** Path to the `.env` file `readSendTokens` re-reads on every send. */
+const ENV_PATH = process.env.GV_ENV_PATH ?? ".env";
+
+/**
+ * Parses `GV_SEND_ATTESTATION_TOKEN`/`GV_SEND_RECAPTCHA_TOKEN` lines out of
+ * a raw `.env` file's contents, matching the `NAME="value"` format
+ * `writeEnvVar` (from the parent library) writes.
+ */
+function parseEnvTokens(contents: string): { attestationToken?: string; recaptchaToken?: string } {
+  const result: { attestationToken?: string; recaptchaToken?: string } = {};
+  for (const line of contents.split("\n")) {
+    const match = /^(GV_SEND_ATTESTATION_TOKEN|GV_SEND_RECAPTCHA_TOKEN)=(.*)$/.exec(line.trim());
+    if (!match) continue;
+    const value = match[2].replace(/^"(.*)"$/, "$1");
+    if (match[1] === "GV_SEND_ATTESTATION_TOKEN") result.attestationToken = value;
+    else result.recaptchaToken = value;
+  }
+  return result;
+}
+
+/**
+ * Reads the outbound WAA/reCAPTCHA send-token pair fresh on every call
+ * instead of once at startup. In the Docker Compose split, a sidecar
+ * service (`bin/refresh-tokens.ts --loop`) rewrites these into the shared
+ * `.env` file every few minutes; bun's `--env-file` only populates
+ * `process.env` once at process start, so trusting `process.env` here would
+ * silently serve stale (soon-expired) tokens for the bridge's entire
+ * lifetime instead of picking up each refresh.
+ *
+ * @precondition None.
+ * @postcondition Returns the freshest token pair found in {@link ENV_PATH},
+ *   falling back to `process.env` (the boot-time value) if the file is
+ *   missing or doesn't have both — e.g. under `bun test` or a single-shot
+ *   deployment that never runs the refresh sidecar. Returns undefined if
+ *   neither source has a complete pair.
+ */
+function readSendTokens(): { attestationToken: string; recaptchaToken: string } | undefined {
+  const fromFile = existsSync(ENV_PATH) ? parseEnvTokens(readFileSync(ENV_PATH, "utf8")) : {};
+  const attestationToken = fromFile.attestationToken ?? process.env.GV_SEND_ATTESTATION_TOKEN;
+  const recaptchaToken = fromFile.recaptchaToken ?? process.env.GV_SEND_RECAPTCHA_TOKEN;
+  return attestationToken && recaptchaToken ? { attestationToken, recaptchaToken } : undefined;
+}
+
 /**
  * Whether two phone numbers refer to the same line. Compares on digits only
  * and tolerates a missing/inconsistent country code: `4697590653` (national)
@@ -114,13 +157,6 @@ function loadConfig(): BridgeConfig {
     discordToken: env("DISCORD_TOKEN"),
     dmUserId: env("BRIDGE_DM_USER_ID"),
     phoneNumber,
-    sendTokens:
-      process.env.GV_SEND_ATTESTATION_TOKEN && process.env.GV_SEND_RECAPTCHA_TOKEN
-        ? {
-            attestationToken: process.env.GV_SEND_ATTESTATION_TOKEN,
-            recaptchaToken: process.env.GV_SEND_RECAPTCHA_TOKEN,
-          }
-        : undefined,
     pollIntervalSec: Number(process.env.GV_POLL_INTERVAL_SEC ?? 5),
   };
 }
@@ -190,7 +226,7 @@ discord.once("ready", async () => {
   console.log(`Selfbot online as ${discord.user?.username}`);
   await voice.start({ intervalMs: config.pollIntervalSec * 1000 });
   console.log("Voice poll loop started. Bridging", config.phoneNumber, "<->", config.dmUserId);
-  if (!config.sendTokens) {
+  if (!readSendTokens()) {
     console.warn(
       "GV_SEND_ATTESTATION_TOKEN / GV_SEND_RECAPTCHA_TOKEN not set — Discord→phone " +
         "sends will be skipped (Voice inbound to Discord still works).",
@@ -284,7 +320,8 @@ discord.on("messageCreate", async (message) => {
     debug("→ skip: not a DM channel (type", message.channel.type, ")");
     return;
   }
-  if (!config.sendTokens) {
+  const sendTokens = readSendTokens();
+  if (!sendTokens) {
     console.warn("Outbound send skipped: no send tokens configured.");
     return;
   }
@@ -308,7 +345,7 @@ discord.on("messageCreate", async (message) => {
       attachment ? `+ MMS (${attachment.mimeType}, ${attachment.data.byteLength}b)` : "",
     );
     await voice.sendMessage(threadId, text, String(Date.now()), {
-      tokens: config.sendTokens,
+      tokens: sendTokens,
       attachment,
       compress: true,
     });
