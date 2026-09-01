@@ -1,0 +1,17 @@
+{
+  "name": "google-voice-discord-bridge",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "bun --env-file=.env run index.ts"
+  },
+  "dependencies": {
+    "discord.js": "^14.16.0",
+    "google-voice-client": "file:../.."
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.0",
+    "typescript": "^7.0.2"
+  }
+}

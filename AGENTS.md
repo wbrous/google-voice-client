@@ -15,8 +15,17 @@ Unofficial [Bun](https://bun.sh) + TypeScript client for Google Voice's **intern
 - `src/firefox.ts` / `src/browser.ts` — read session cookies from a browser profile (`cookies.sqlite` for Firefox-family, `@mherod/get-cookie` optional peer for Chromium/Safari).
 - `src/refresh.ts` — headless Playwright login fallback (optional peer).
 - `src/env.ts` — read/write `.env` credentials (`GV_COOKIE`, `GV_API_KEY`, `GV_AUTH_USER`, ...).
-- `bin/refresh-cookies.ts` — CLI: refresh `.env` from a browser jar or Playwright.
+ - `bin/refresh-cookies.ts` — CLI: refresh `.env` from a browser jar or Playwright.
 - `test/` — bun:test. Tests use fixture rows / synthetic `moz_cookies` DBs.
+
+## Example: Discord bridge
+
+- `examples/discord-bridge/` — a runnable app (own package.json + `discord.js`)
+  that bridges one phone number with one Discord DM via this library's event
+  loop (see its README). It's a separate package so its `discord.js` dep never
+  pollutes the published lib. It depends on `google-voice-client` via
+  `"file:../.."` — after changing library code, rebuild the parent
+  (`bun run build`) before testing the bridge.
 
 ## Wire-format rules (from live capture — do not "fix" these)
 
