@@ -250,7 +250,12 @@ discord.on("messageCreate", async (message) => {
     const attachment = discordAttachment
       ? await fetchDiscordAttachment(discordAttachment.url, discordAttachment.contentType)
       : undefined;
-    debug("sending to phone:", config.threadId, JSON.stringify(text), attachment ? `+ MMS (${attachment.mimeType}, ${attachment.data.byteLength}b)` : "");
+    debug(
+      "sending to phone:",
+      config.threadId,
+      JSON.stringify(text),
+      attachment ? `+ MMS (${attachment.mimeType}, ${attachment.data.byteLength}b)` : "",
+    );
     await voice.sendMessage(config.threadId, text, String(Date.now()), {
       tokens: config.sendTokens,
       attachment,
@@ -258,6 +263,14 @@ discord.on("messageCreate", async (message) => {
     console.log(`[discord→voice] ${text || "<attachment>"}`);
   } catch (err) {
     console.error("[discord→voice] failed:", err instanceof Error ? err.message : err);
+    // A 400 on sendsms (not 401) almost always means the WAA/reCAPTCHA send
+    // tokens have gone stale — they're session-recent and expire in
+    // minutes-to-hours. Re-capture a fresh pair rather than guessing.
+    if (err instanceof Error && /400|INVALID_ARGUMENT/.test(err.message)) {
+      console.error(
+        "↳ the GV_SEND_* tokens look stale — run `bun run capture-tokens` and re-send a message to refresh them (inbound forwarding still works meanwhile).",
+      );
+    }
   }
 });
 
