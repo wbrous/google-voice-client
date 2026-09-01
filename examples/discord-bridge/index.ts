@@ -290,6 +290,7 @@ discord.on("messageCreate", async (message) => {
     await voice.sendMessage(threadId, text, String(Date.now()), {
       tokens: config.sendTokens,
       attachment,
+      compress: true,
     });
     console.log(`[discord→voice] ${text || "<attachment>"}`);
   } catch (err) {
