@@ -34,7 +34,7 @@
  */
 import { existsSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { Client } from "discord.js-selfbot-youtsuho-v13";
+import { Client, type Message } from "discord.js-selfbot-youtsuho-v13";
 import { GoogleVoiceClient, loadEnv } from "google-voice-client";
 
 /**
@@ -207,6 +207,56 @@ function stripLeadingMention(content: string): string {
   return content.replace(/^<@!?\d+>\s*/, "").trim();
 }
 
+/** Maps Google Voice's plain-label reaction verbs to a Discord emoji. */
+const REACTION_LABEL_EMOJI: Record<string, string> = {
+  Liked: "👍",
+  Loved: "💖",
+  Disliked: "👎",
+};
+
+/**
+ * Parses one of Google Voice's iMessage-style "tapback" notification texts:
+ * `Liked "…"`, `Loved "…"`, `Disliked "…"`, or `Reacted <emoji> to "…"`. The
+ * quoted part may span multiple lines. Returns the emoji to react with and
+ * the quoted text it targets, or `null` if `text` isn't one of these.
+ */
+function parseReactionMessage(text: string): { emoji: string; quoted: string } | null {
+  const quoted = `[“"]([\\s\\S]*)[”"]`;
+  const labelMatch = text.match(new RegExp(`^(Liked|Loved|Disliked) ${quoted}$`));
+  if (labelMatch) {
+    const [, label, body] = labelMatch;
+    return { emoji: REACTION_LABEL_EMOJI[label as keyof typeof REACTION_LABEL_EMOJI], quoted: body };
+  }
+  const reactedMatch = text.match(new RegExp(`^Reacted (\\S+) to ${quoted}$`));
+  if (reactedMatch) {
+    const [, emoji, body] = reactedMatch;
+    return { emoji, quoted: body };
+  }
+  return null;
+}
+
+/**
+ * Bounded history of messages this bridge forwarded from Voice to Discord,
+ * keyed by their exact text, so a later reaction notification (`Liked
+ * "…"`) can be mapped onto the original Discord message instead of being
+ * posted as its own message.
+ */
+const MAX_RECENT_FORWARDED = 50;
+const recentForwarded: Array<{ text: string; message: Message }> = [];
+
+function rememberForwarded(text: string, message: Message): void {
+  recentForwarded.push({ text, message });
+  if (recentForwarded.length > MAX_RECENT_FORWARDED) recentForwarded.shift();
+}
+
+function findForwardedMessage(text: string): Message | undefined {
+  const normalized = text.trim();
+  for (let i = recentForwarded.length - 1; i >= 0; i--) {
+    if (recentForwarded[i].text.trim() === normalized) return recentForwarded[i].message;
+  }
+  return undefined;
+}
+
 /**
  * Downloads a Discord CDN attachment's bytes for forwarding as an MMS photo.
  * Selfbot message.attachments expose a public `url`; a plain fetch gets the
@@ -257,6 +307,19 @@ voice.on("messageCreate", async (event) => {
     const dm = await user.createDM();
     const body = event.text || "(message with no text)";
     const attachment = event.attachments[0];
+    if (!attachment) {
+      const reaction = parseReactionMessage(body);
+      if (reaction) {
+        const target = findForwardedMessage(reaction.quoted);
+        if (target) {
+          debug("mapping voice reaction to discord react:", reaction.emoji, "on", JSON.stringify(reaction.quoted).slice(0, 80));
+          await target.react(reaction.emoji);
+          console.log(`[voice→discord] reacted ${reaction.emoji} to "${reaction.quoted.slice(0, 40)}"`);
+          return;
+        }
+        debug("reaction target not found among recent forwarded messages, sending as plain text");
+      }
+    }
     if (attachment) {
       const { data, contentType } = await voice.downloadAttachment(attachment.id);
       const name = `attachment.${contentType.split("/")[1] ?? "bin"}`;
@@ -264,7 +327,8 @@ voice.on("messageCreate", async (event) => {
       await dm.send({ content: body, files: [{ attachment: Buffer.from(data), name }] });
     } else {
       debug("forwarding text to discord:", JSON.stringify(body));
-      await dm.send(body);
+      const sent = await dm.send(body);
+      rememberForwarded(body, sent);
     }
     console.log(`[voice→discord] ${event.text || "<attachment>"}`);
   } catch (err) {
