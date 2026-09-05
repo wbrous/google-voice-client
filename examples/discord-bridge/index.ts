@@ -257,8 +257,29 @@ function findForwardedMessage(text: string): Message | undefined {
   return undefined;
 }
 
-function latestForwarded(): Message | undefined {
-  return recentForwarded[recentForwarded.length - 1]?.message;
+/**
+ * Most recently forwarded message authored by the bridged Discord user —
+ * the default `.reply` target when no quoted text is given, since a bare
+ * `.reply` should reply to what the *other person* said, even if the
+ * bridge itself sent a message more recently.
+ */
+function latestFromUser(): Message | undefined {
+  for (let i = recentForwarded.length - 1; i >= 0; i--) {
+    if (recentForwarded[i].message.author.id === config.dmUserId) return recentForwarded[i].message;
+  }
+  return undefined;
+}
+
+/**
+ * Most recently forwarded message authored by the bridge's own Discord
+ * account — the default `.edit` target when no quoted text is given, since
+ * Discord only allows editing messages you sent yourself.
+ */
+function latestFromSelf(): Message | undefined {
+  for (let i = recentForwarded.length - 1; i >= 0; i--) {
+    if (recentForwarded[i].message.author.id === discord.user?.id) return recentForwarded[i].message;
+  }
+  return undefined;
 }
 
 function updateRememberedText(message: Message, newText: string): void {
@@ -275,8 +296,8 @@ function updateRememberedText(message: Message, newText: string): void {
  * the bridged Discord conversation from the phone side:
  *   .reply "quoted target text"
  *   the reply body (rest of the message)
- * or, omitting the quoted target to act on the most recently forwarded
- * message in either direction:
+ * or, omitting the quoted target to act on a direction-appropriate default
+ * (see `latestFromUser`/`latestFromSelf` at the call site):
  *   .reply
  *   the reply body
  * `.edit` works the same way but edits the target message's content instead
@@ -374,7 +395,11 @@ voice.on("messageCreate", async (event) => {
     if (!attachment) {
       const command = parseVoiceCommand(body);
       if (command) {
-        const target = command.quoted ? findForwardedMessage(command.quoted) : latestForwarded();
+        const target = command.quoted
+          ? findForwardedMessage(command.quoted)
+          : command.type === "reply"
+            ? latestFromUser()
+            : latestFromSelf();
         if (target) {
           const label = (command.quoted ?? "<latest>").slice(0, 40);
           if (command.type === "reply") {
