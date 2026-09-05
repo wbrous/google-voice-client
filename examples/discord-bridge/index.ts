@@ -538,6 +538,54 @@ discord.on("messageCreate", async (message) => {
   }
 });
 
+// Discord → Voice: forward the bridged user editing a Discord message as a
+// follow-up SMS, since Voice has no concept of editing a sent text:
+//   edit: their old message
+//
+//   their new message
+discord.on("messageUpdate", async (oldMessage, newMessage) => {
+  debug("discord messageUpdate:", {
+    author: newMessage.author?.id,
+    self: discord.user?.id,
+    channelType: newMessage.channel?.type,
+    oldContent: (oldMessage.content || "").slice(0, 80),
+    newContent: (newMessage.content || "").slice(0, 80),
+  });
+  if (newMessage.author?.id === discord.user?.id) {
+    debug("→ skip: own message (would loop)");
+    return;
+  }
+  if (newMessage.author?.id !== config.dmUserId) {
+    debug("→ skip: author", newMessage.author?.id, "!= bridged", config.dmUserId);
+    return;
+  }
+  if (newMessage.channel.type !== "DM" && newMessage.channel.type !== "GROUP") {
+    debug("→ skip: not a DM channel (type", newMessage.channel.type, ")");
+    return;
+  }
+  const oldText = oldMessage.content || "(no text)";
+  const newText = stripLeadingMention(newMessage.content || "") || "(no text)";
+  if (oldText === newText) {
+    debug("→ skip: content unchanged (likely an embed/attachment update)");
+    return;
+  }
+  const sendTokens = readSendTokens();
+  if (!sendTokens) {
+    console.warn("Outbound send skipped: no send tokens configured.");
+    return;
+  }
+  const text = `edit: ${oldText}\n\n${newText}`;
+  try {
+    const threadId = await resolveThreadId();
+    debug("sending edit notice to phone:", threadId, JSON.stringify(text));
+    await voice.sendMessage(threadId, text, String(Date.now()), { tokens: sendTokens, compress: true });
+    updateRememberedText(newMessage, newText);
+    console.log(`[discord→voice] edit: ${oldText} -> ${newText}`);
+  } catch (err) {
+    console.error("[discord→voice] failed to forward edit:", err instanceof Error ? err.message : err);
+  }
+});
+
 process.on("SIGINT", () => {
   voice.stop();
   // discord.js-selfbot-youtsuho-v13's WebSocketShard#destroy() dereferences
