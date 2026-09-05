@@ -413,6 +413,7 @@ discord.on("messageCreate", async (message) => {
       attachment,
       compress: true,
     });
+    if (text) rememberForwarded(text, message);
     console.log(`[discord→voice] ${text || "<attachment>"}`);
   } catch (err) {
     console.error("[discord→voice] failed:", err instanceof Error ? err.message : err);
