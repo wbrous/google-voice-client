@@ -257,6 +257,44 @@ function findForwardedMessage(text: string): Message | undefined {
   return undefined;
 }
 
+function latestForwarded(): Message | undefined {
+  return recentForwarded[recentForwarded.length - 1]?.message;
+}
+
+function updateRememberedText(message: Message, newText: string): void {
+  for (let i = recentForwarded.length - 1; i >= 0; i--) {
+    if (recentForwarded[i].message.id === message.id) {
+      recentForwarded[i].text = newText;
+      return;
+    }
+  }
+}
+
+/**
+ * Parses a `.reply`/`.edit` command typed into the Messages app to control
+ * the bridged Discord conversation from the phone side:
+ *   .reply "quoted target text"
+ *   the reply body (rest of the message)
+ * or, omitting the quoted target to act on the most recently forwarded
+ * message in either direction:
+ *   .reply
+ *   the reply body
+ * `.edit` works the same way but edits the target message's content instead
+ * of replying to it (only succeeds if the bridge itself sent that message —
+ * Discord only allows editing your own messages). Returns `null` for
+ * anything that isn't a well-formed command (wrong command name, or no
+ * payload line after the command).
+ */
+function parseVoiceCommand(text: string): { type: "reply" | "edit"; quoted?: string; body: string } | null {
+  const newlineIndex = text.indexOf("\n");
+  if (newlineIndex === -1) return null;
+  const firstLine = text.slice(0, newlineIndex);
+  const body = text.slice(newlineIndex + 1).trim();
+  const match = firstLine.match(/^\.(reply|edit)(?:\s+"([^"]*)")?\s*$/i);
+  if (!match || !body) return null;
+  return { type: match[1].toLowerCase() as "reply" | "edit", quoted: match[2]?.trim(), body };
+}
+
 /**
  * Downloads a Discord CDN attachment's bytes for forwarding as an MMS photo.
  * Selfbot message.attachments expose a public `url`; a plain fetch gets the
@@ -334,6 +372,24 @@ voice.on("messageCreate", async (event) => {
     const body = event.text || "(message with no text)";
     const attachment = event.attachments[0];
     if (!attachment) {
+      const command = parseVoiceCommand(body);
+      if (command) {
+        const target = command.quoted ? findForwardedMessage(command.quoted) : latestForwarded();
+        if (target) {
+          const label = (command.quoted ?? "<latest>").slice(0, 40);
+          if (command.type === "reply") {
+            const sent = await target.reply(command.body);
+            rememberForwarded(command.body, sent);
+            console.log(`[voice→discord] replied to "${label}"`);
+          } else {
+            await target.edit(command.body);
+            updateRememberedText(target, command.body);
+            console.log(`[voice→discord] edited "${label}"`);
+          }
+          return;
+        }
+        debug("command target not found among recent forwarded messages, sending as plain text");
+      }
       const reaction = parseReactionMessage(body);
       if (reaction) {
         const target = findForwardedMessage(reaction.quoted);
