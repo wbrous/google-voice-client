@@ -272,6 +272,32 @@ async function fetchDiscordAttachment(
   return { data, mimeType: contentType || "application/octet-stream" };
 }
 
+/**
+ * If `message` is a Discord reply, fetches the message it replied to and
+ * formats it as a block quote (every line prefixed with `> `), matching the
+ * iMessage/SMS-style quoting Google Voice shows in the Messages app:
+ *   > original line one
+ *   > original line two
+ *
+ * Returns `undefined` for a non-reply, or if the referenced message can no
+ * longer be fetched (e.g. it was deleted).
+ */
+async function buildReplyQuote(message: Message): Promise<string | undefined> {
+  const referenceId = message.reference?.messageId;
+  if (!referenceId) return undefined;
+  try {
+    const referenced = await message.channel.messages.fetch(referenceId);
+    const quotedText = referenced.content || "(no text)";
+    return quotedText
+      .split("\n")
+      .map((line: string) => `> ${line}`)
+      .join("\n");
+  } catch (err) {
+    debug("failed to fetch replied-to message:", err instanceof Error ? err.message : err);
+    return undefined;
+  }
+}
+
 discord.once("ready", async () => {
   console.log(`Selfbot online as ${discord.user?.username}`);
   await voice.start({ intervalMs: config.pollIntervalSec * 1000 });
@@ -389,11 +415,13 @@ discord.on("messageCreate", async (message) => {
     console.warn("Outbound send skipped: no send tokens configured.");
     return;
   }
-  const text = stripLeadingMention(message.content);
+  const rawText = stripLeadingMention(message.content);
+  const replyQuote = await buildReplyQuote(message);
+  const text = replyQuote ? `${replyQuote}\n\n${rawText}` : rawText;
   // Allow attachment-only messages: fetch the first Discord attachment's
   // bytes to send as an MMS photo alongside (or instead of) the text.
   const discordAttachment = message.attachments.first();
-  if (!text && !discordAttachment) {
+  if (!rawText && !discordAttachment && !replyQuote) {
     debug("→ skip: empty content and no attachment");
     return;
   }
