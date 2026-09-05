@@ -309,14 +309,22 @@ export class GoogleVoiceClient extends EventEmitter implements VoiceClient {
         this.emit("ready", threads.length);
         return;
       }
+      // Multiple new messages can land in a single tick (e.g. two SMS sent
+      // back-to-back between polls); `next` iterates in server response
+      // order, which is not guaranteed chronological, so consumers that
+      // forward `messageCreate` 1:1 (like the Discord bridge example) would
+      // otherwise post them out of order. Sort creates by timestamp first.
+      const creates: ThreadEvent[] = [];
       for (const [id, event] of next) {
         const before = this.snapshot.get(id);
         if (!before) {
-          this.emit("messageCreate", event);
+          creates.push(event);
         } else if (JSON.stringify(before) !== JSON.stringify(event)) {
           this.emit("messageUpdate", event, before);
         }
       }
+      creates.sort((a, b) => a.timestampMs - b.timestampMs);
+      for (const event of creates) this.emit("messageCreate", event);
       this.snapshot = next;
     };
 

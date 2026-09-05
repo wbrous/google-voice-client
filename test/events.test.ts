@@ -99,6 +99,37 @@ describe("GoogleVoiceClient poll loop", () => {
     expect(created).toEqual(["new"]);
   });
 
+  // If this fails: two messages that land in the same poll tick (sent
+  // back-to-back between polls) are emitted in server response order
+  // instead of chronological order, so a consumer that forwards them 1:1
+  // (e.g. the Discord bridge example) posts them out of order.
+  test("emits batched messageCreate events oldest-first regardless of response order", async () => {
+    const client = new GoogleVoiceClient(fakeEnv());
+    let nth = 0;
+    const existing = makeEvent("seen", "already seen");
+    const older = { ...makeEvent("a", "first message"), timestampMs: 100 };
+    const newer = { ...makeEvent("b", "second message"), timestampMs: 200 };
+    (client as unknown as { listThreads: () => Promise<Thread[]> }).listThreads = async () => {
+      nth += 1;
+      if (nth === 1) return [makeThread([existing])];
+      // Server returns the newer event first — the poll loop must not
+      // trust this order.
+      return [makeThread([existing, newer, older])];
+    };
+
+    const created: string[] = [];
+    const { promise: bothCreated, resolve } = Promise.withResolvers<void>();
+    client.on("messageCreate", (m) => {
+      created.push(m.text);
+      if (created.length === 2) resolve();
+    });
+
+    await client.start({ intervalMs: 1 });
+    await bothCreated;
+    client.stop();
+    expect(created).toEqual(["first message", "second message"]);
+  });
+
   // If this fails: messageUpdate isn't emitted when an existing event's
   // attributes change between snapshots.
   test("emits messageUpdate when an event's content changes", async () => {
