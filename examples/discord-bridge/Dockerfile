@@ -29,13 +29,16 @@ COPY examples/discord-bridge/package.json ./
 # Resolves the bridge's "google-voice-client": "link:google-voice-client"
 # dependency against the link registered above.
 RUN bun install
-COPY examples/discord-bridge/tsconfig.json ./
-COPY examples/discord-bridge/index.ts ./
-COPY examples/discord-bridge/bin ./bin
 
 # Chromium + its OS-level shared libs. Only bin/refresh-tokens.ts (the
 # `refresh-tokens` service) launches a browser — the `bridge` service never
-# touches Playwright — but both run from this one image, so install it here.
+# touches Playwright — but both run from this one image, so install it
+# here. Placed right after `bun install` (before the source COPYs below) so
+# editing index.ts/bin doesn't bust this ~4-minute layer's cache.
 RUN bunx playwright install --with-deps chromium
+
+COPY examples/discord-bridge/tsconfig.json ./
+COPY examples/discord-bridge/index.ts ./
+COPY examples/discord-bridge/bin ./bin
 
 CMD ["bun", "run", "start"]
