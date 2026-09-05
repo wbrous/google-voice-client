@@ -291,6 +291,28 @@ function updateRememberedText(message: Message, newText: string): void {
   }
 }
 
+function removeRemembered(message: Message): void {
+  const index = recentForwarded.findIndex((entry) => entry.message.id === message.id);
+  if (index !== -1) recentForwarded.splice(index, 1);
+}
+
+/**
+ * Parses a `.delete` command typed into the Messages app:
+ *   .delete
+ * deletes the latest message forwarded from the phone side (the bridge's
+ * own Discord message — see `latestFromSelf`), or:
+ *   .delete "quoted target text"
+ * deletes that specific message. Always targets a message the bridge
+ * itself posted — the messages representing what came in from the phone —
+ * since Discord only allows deleting your own messages, and never the
+ * bridged Discord user's own messages. Returns `null` for anything that
+ * isn't a well-formed `.delete` command.
+ */
+function parseDeleteCommand(text: string): { quoted?: string } | null {
+  const match = text.trim().match(/^\.delete(?:\s+"([^"]*)")?\s*$/i);
+  return match ? { quoted: match[1]?.trim() } : null;
+}
+
 /**
  * Parses a `.reply`/`.edit` command typed into the Messages app to control
  * the bridged Discord conversation from the phone side:
@@ -414,6 +436,18 @@ voice.on("messageCreate", async (event) => {
           return;
         }
         debug("command target not found among recent forwarded messages, sending as plain text");
+      }
+      const deleteCommand = parseDeleteCommand(body);
+      if (deleteCommand) {
+        const target = deleteCommand.quoted ? findForwardedMessage(deleteCommand.quoted) : latestFromSelf();
+        if (target) {
+          const label = (deleteCommand.quoted ?? "<latest>").slice(0, 40);
+          await target.delete();
+          removeRemembered(target);
+          console.log(`[voice→discord] deleted "${label}"`);
+          return;
+        }
+        debug("delete target not found among recent forwarded messages, sending as plain text");
       }
       const reaction = parseReactionMessage(body);
       if (reaction) {
